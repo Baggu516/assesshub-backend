@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env.js';
 import { connectDb } from './config/db.js';
+import { createCorsOriginChecker, parseCorsOrigins } from './utils/corsOrigin.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
 import { errorMiddleware } from './middleware/error.middleware.js';
 import routes from './routes/index.js';
@@ -25,7 +26,7 @@ export function createApp() {
   app.use(helmet());
   app.use(
     cors({
-      origin: env.CORS_ORIGIN.split(',').map((s) => s.trim()),
+      origin: createCorsOriginChecker(parseCorsOrigins(env.CORS_ORIGIN)),
       credentials: true,
     })
   );
