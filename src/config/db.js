@@ -15,7 +15,13 @@ export async function connectDb() {
 
   if (!cache.promise) {
     mongoose.set('strictQuery', true);
-    cache.promise = mongoose.connect(env.MONGODB_URI).then((m) => m.connection);
+    const serverless = Boolean(process.env.VERCEL);
+    cache.promise = mongoose
+      .connect(env.MONGODB_URI, {
+        serverSelectionTimeoutMS: serverless ? 8000 : 30000,
+        maxPoolSize: serverless ? 1 : 10,
+      })
+      .then((m) => m.connection);
   }
 
   cache.conn = await cache.promise;
