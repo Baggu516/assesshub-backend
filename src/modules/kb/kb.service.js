@@ -1,6 +1,5 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import mongoose from 'mongoose';
 import { env } from '../../config/env.js';
 import { extractTextFromFile, detectFileType } from './kb.extract.js';
@@ -20,14 +19,14 @@ import {
   resolveChunkingParams,
   serializeChunkingSettings,
 } from './kb.config.util.js';
+import { projectUploadsPath } from '../../utils/writableDir.js';
 import {
   enrichmentAvailable,
   generateDocumentSummary,
   generateSyntheticQuestions,
 } from './kb.enrich.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const KB_UPLOAD_ROOT = path.join(__dirname, '../../../uploads/kb');
+export const KB_UPLOAD_ROOT = projectUploadsPath('kb');
 
 function httpError(status, message) {
   const e = new Error(message);

@@ -1,4 +1,3 @@
-import { pipeline } from '@xenova/transformers';
 import { HUGGINGFACE_MODEL_ALIASES } from './kb.constants.js';
 
 const extractorCache = new Map();
@@ -11,7 +10,10 @@ export function toXenovaModelId(model) {
 async function getExtractor(xenovaModelId) {
   let pending = extractorCache.get(xenovaModelId);
   if (!pending) {
-    pending = pipeline('feature-extraction', xenovaModelId);
+    pending = (async () => {
+      const { pipeline } = await import('@xenova/transformers');
+      return pipeline('feature-extraction', xenovaModelId);
+    })();
     extractorCache.set(xenovaModelId, pending);
   }
   return pending;
