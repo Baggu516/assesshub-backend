@@ -1,8 +1,7 @@
 {
   "version": 2,
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }],
   "functions": {
-    "api/index.js": {
+    "src/app.js": {
       "maxDuration": 30,
       "memory": 1024
     }

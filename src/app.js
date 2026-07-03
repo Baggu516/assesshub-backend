@@ -38,3 +38,6 @@ export function createApp() {
   app.use(errorMiddleware);
   return app;
 }
+
+/** Vercel zero-config Express entry (see vercel.com/docs/frameworks/backend/express). */
+export default createApp();
