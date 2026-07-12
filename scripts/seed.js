@@ -1,20 +1,23 @@
 /**
- * Optional: register a demo organization via the public API or run this script pattern.
- * For local dev, use seed or create an org via POST /api/platform/organizations.
+ * Seed a demo organization + admin for local development.
+ * Usage: npm run seed
+ * Optional env: SEED_SUBDOMAIN, SEED_ADMIN_EMAIL, SEED_ADMIN_PASSWORD
  */
 import dotenv from 'dotenv';
 dotenv.config();
 
+import { configureDns } from '../src/utils/dns.js';
+configureDns();
+
 import mongoose from 'mongoose';
-import { env } from '../config/env.js';
-import { Organization } from '../models/Organization.js';
-import { getTenantModels } from '../db/tenantModels.js';
-import { ensureTenantCatalog } from '../db/tenantCatalog.js';
-import { hashPassword } from '../utils/hash.js';
-import { ALL_PERMISSION_KEYS } from '../constants/permissions.js';
+import { Organization } from '../src/models/Organization.js';
+import { getTenantModels } from '../src/db/tenantModels.js';
+import { ensureTenantCatalog } from '../src/db/tenantCatalog.js';
+import { hashPassword } from '../src/utils/hash.js';
+import { ALL_PERMISSION_KEYS } from '../src/constants/permissions.js';
 
 async function run() {
-  await mongoose.connect(env.MONGODB_URI);
+  await mongoose.connect(process.env.MONGODB_URI);
 
   const subdomain = process.env.SEED_SUBDOMAIN || 'demo';
   let org = await Organization.findOne({ subdomain });

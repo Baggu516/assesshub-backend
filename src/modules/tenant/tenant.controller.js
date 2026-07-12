@@ -20,6 +20,9 @@ const SIDEBAR_LABEL_KEYS = [
   'settingsNav',
   'assessments',
   'myAssessments',
+  'groupStudents',
+  'classes',
+  'knowledgeBase',
 ];
 
 export const patchOrgSettings = asyncHandler(async (req, res) => {

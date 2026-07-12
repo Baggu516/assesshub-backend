@@ -1,19 +1,19 @@
 import { asyncHandler } from '../../utils/asyncHandler.js';
+import { listNotificationsForUser, markNotificationRead } from './notification.service.js';
 
 export const listNotifications = asyncHandler(async (req, res) => {
-  const { Notification } = req.tenantModels;
-  const items = await Notification.find({ orgId: req.tenant.orgId, userId: req.user._id })
-    .sort({ createdAt: -1 })
-    .limit(50)
-    .lean();
-  res.json({ notifications: items });
+  const notifications = await listNotificationsForUser(req.tenantModels, {
+    orgId: req.tenant.orgId,
+    userId: req.user._id,
+  });
+  res.json({ notifications });
 });
 
 export const markRead = asyncHandler(async (req, res) => {
-  const { Notification } = req.tenantModels;
-  await Notification.updateOne(
-    { _id: req.params.id, orgId: req.tenant.orgId, userId: req.user._id },
-    { $set: { readAt: new Date() } }
-  );
+  await markNotificationRead(req.tenantModels, {
+    orgId: req.tenant.orgId,
+    userId: req.user._id,
+    notificationId: req.params.id,
+  });
   res.status(204).send();
 });

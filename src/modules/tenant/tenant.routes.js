@@ -18,6 +18,9 @@ const sidebarLabelsSchema = z
     settingsNav: z.string().trim().max(48).optional(),
     assessments: z.string().trim().max(48).optional(),
     myAssessments: z.string().trim().max(48).optional(),
+    groupStudents: z.string().trim().max(48).optional(),
+    classes: z.string().trim().max(48).optional(),
+    knowledgeBase: z.string().trim().max(48).optional(),
   })
   .optional();
 

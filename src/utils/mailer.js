@@ -1,16 +1,19 @@
 import nodemailer from 'nodemailer';
-import { env } from '../config/env.js';
 
 let transporter;
 
 function getTransporter() {
-  if (!env.SMTP_HOST) return null;
+  if (!process.env.SMTP_HOST) return null;
   if (!transporter) {
+    const port = parseInt(process.env.SMTP_PORT, 10);
     transporter = nodemailer.createTransport({
-      host: env.SMTP_HOST,
-      port: env.SMTP_PORT,
-      secure: env.SMTP_PORT === 465,
-      auth: env.SMTP_USER && env.SMTP_PASS ? { user: env.SMTP_USER, pass: env.SMTP_PASS } : undefined,
+      host: process.env.SMTP_HOST,
+      port,
+      secure: port === 465,
+      auth:
+        process.env.SMTP_USER && process.env.SMTP_PASS
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
     });
   }
   return transporter;
@@ -23,12 +26,12 @@ export async function sendInvitationEmail({ to, orgName, inviteLink, inviterName
 
   if (tx) {
     await tx.sendMail({
-      from: env.MAIL_FROM,
+      from: process.env.MAIL_FROM,
       to,
       subject,
       text,
     });
-  } else if (env.NODE_ENV !== 'test') {
+  } else if (process.env.NODE_ENV !== 'test') {
     console.info('[mail:stub]', { to, subject, inviteLink });
   }
 }

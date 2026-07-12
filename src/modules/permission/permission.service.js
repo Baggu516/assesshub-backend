@@ -4,6 +4,7 @@ export async function listPermissions(models) {
   return models.Permission.find().sort({ key: 1 }).lean();
 }
 
+/** Validate an array of permission keys against the catalog. */
 export function validatePermissionKeys(keys) {
   if (!Array.isArray(keys)) return false;
   return keys.every((k) => ALL_PERMISSION_KEYS.includes(k));

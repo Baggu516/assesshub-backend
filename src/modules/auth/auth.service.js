@@ -4,7 +4,6 @@ import { ensureTenantCatalog } from '../../db/tenantCatalog.js';
 import { hashPassword, comparePassword, hashToken } from '../../utils/hash.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
 import { ALL_PERMISSION_KEYS } from '../../constants/permissions.js';
-import { env } from '../../config/env.js';
 
 /** Stores refresh token and returns the same token payload shape as login. */
 export async function issueTenantSession(models, populatedUser, subdomain) {
@@ -35,7 +34,7 @@ function buildTokenResponse(user, refreshTokenPlain, subdomain) {
   return {
     accessToken,
     refreshToken: refreshTokenPlain,
-    expiresIn: env.JWT_ACCESS_EXPIRES_IN,
+    expiresIn: process.env.JWT_ACCESS_EXPIRES_IN,
     user: sanitizeUser(user),
   };
 }

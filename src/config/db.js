@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import { env } from './env.js';
 
 const globalState = globalThis;
 
@@ -17,7 +16,7 @@ export async function connectDb() {
     mongoose.set('strictQuery', true);
     const serverless = Boolean(process.env.VERCEL);
     cache.promise = mongoose
-      .connect(env.MONGODB_URI, {
+      .connect(process.env.MONGODB_URI, {
         serverSelectionTimeoutMS: serverless ? 8000 : 30000,
         maxPoolSize: serverless ? 1 : 10,
       })

@@ -6,4 +6,5 @@ build/
 *.log
 .DS_Store
 coverage/
-backend/uploads/
+uploads/
+src/uploads/

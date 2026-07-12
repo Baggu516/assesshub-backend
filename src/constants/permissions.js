@@ -3,6 +3,7 @@ export const PERMISSION_KEYS = {
   USER_CREATE: 'user_create',
   SUBORDINATE_CREATE: 'subordinate_create',
   SETTINGS_MANAGE: 'settings_manage',
+  CLASS_MANAGE: 'class_manage',
   ASSESSMENT_CREATE: 'assessment_create',
   ASSESSMENT_VIEW: 'assessment_view',
   ASSESSMENT_SUBMIT: 'assessment_submit',

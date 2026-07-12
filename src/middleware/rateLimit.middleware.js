@@ -1,9 +1,8 @@
 import rateLimit from 'express-rate-limit';
-import { env } from '../config/env.js';
 
 export const apiLimiter = rateLimit({
-  windowMs: env.RATE_LIMIT_WINDOW_MS,
-  max: env.RATE_LIMIT_MAX,
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10),
+  max: parseInt(process.env.RATE_LIMIT_MAX, 10),
   standardHeaders: true,
   legacyHeaders: false,
 });

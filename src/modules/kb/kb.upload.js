@@ -1,7 +1,6 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs/promises';
-import { env } from '../../config/env.js';
 import { projectUploadsPath } from '../../utils/writableDir.js';
 import { ALLOWED_EXTENSIONS } from './kb.constants.js';
 
@@ -34,6 +33,6 @@ function fileFilter(_req, file, cb) {
 
 export const kbUpload = multer({
   storage,
-  limits: { fileSize: env.KB_MAX_UPLOAD_BYTES },
+  limits: { fileSize: parseInt(process.env.KB_MAX_UPLOAD_BYTES, 10) },
   fileFilter,
 });

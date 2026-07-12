@@ -1,6 +1,6 @@
 /**
- * Factory: require one or more permission keys on req.auth.permissions (OR logic).
- * Do not branch on role names — use permission keys only.
+ * Permission checks on `req.auth.permissions` (keys from constants/permissions.js).
+ * Prefer permission keys over hierarchy role names for feature gates.
  */
 export function requirePermission(...keys) {
   return (req, res, next) => {

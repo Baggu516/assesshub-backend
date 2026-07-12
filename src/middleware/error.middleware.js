@@ -1,4 +1,5 @@
 import { ZodError } from 'zod';
+import { AppError } from '../utils/errors.js';
 
 export function errorMiddleware(err, req, res, _next) {
   if (err instanceof ZodError) {
@@ -8,7 +9,7 @@ export function errorMiddleware(err, req, res, _next) {
     });
   }
 
-  const status = err.status || err.statusCode || 500;
+  const status = err instanceof AppError ? err.status : err.status || err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
 
   if (status >= 500) {

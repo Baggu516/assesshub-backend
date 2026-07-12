@@ -1,16 +1,14 @@
-import { env } from '../../config/env.js';
-
 const FETCH_TIMEOUT_MS = 25_000;
 
 function llmConfigured() {
-  return Boolean(env.GEMINI_API_KEY?.trim() || env.GROQ_API_KEY?.trim());
+  return Boolean(process.env.GEMINI_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim());
 }
 
 async function geminiGenerate(prompt) {
-  const key = env.GEMINI_API_KEY?.trim();
+  const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) return null;
 
-  const model = encodeURIComponent(env.GEMINI_CHAT_MODEL);
+  const model = encodeURIComponent(process.env.GEMINI_CHAT_MODEL);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
   const controller = new AbortController();
@@ -39,7 +37,7 @@ async function geminiGenerate(prompt) {
 }
 
 async function groqGenerate(prompt) {
-  const key = env.GROQ_API_KEY?.trim();
+  const key = process.env.GROQ_API_KEY?.trim();
   if (!key) return null;
 
   const controller = new AbortController();
@@ -54,7 +52,7 @@ async function groqGenerate(prompt) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: env.GROQ_CHAT_MODEL,
+        model: process.env.GROQ_CHAT_MODEL,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 512,
         temperature: 0.2,

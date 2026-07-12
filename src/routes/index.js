@@ -10,6 +10,7 @@ import aiRoutes from '../modules/ai/ai.routes.js';
 import kbRoutes from '../modules/kb/kb.routes.js';
 import assessmentRoutes from '../modules/assessment/assessment.routes.js';
 import studentGroupRoutes from '../modules/student-group/student-group.routes.js';
+import classRoutes from '../modules/class/class.routes.js';
 
 const r = Router();
 
@@ -27,6 +28,7 @@ r.use('/ai', aiRoutes);
 r.use('/kb', kbRoutes);
 r.use('/assessments', assessmentRoutes);
 r.use('/student-groups', studentGroupRoutes);
+r.use('/classes', classRoutes);
 r.use('/platform', platformRoutes);
 
 export default r;

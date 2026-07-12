@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import { env } from '../config/env.js';
 import { userSchema } from '../models/User.js';
 import { roleSchema } from '../models/Role.js';
 import { permissionSchema } from '../models/Permission.js';
@@ -13,6 +12,8 @@ import { knowledgeChunkSchema } from '../models/KnowledgeChunk.js';
 import { assessmentSchema } from '../models/Assessment.js';
 import { assessmentAssignmentSchema } from '../models/AssessmentAssignment.js';
 import { studentGroupSchema } from '../models/StudentGroup.js';
+import { classSchema } from '../models/Class.js';
+import { classMemberSchema } from '../models/ClassMember.js';
 
 const cacheByDbName = new Map();
 
@@ -24,7 +25,7 @@ export function tenantDatabaseName(subdomain) {
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, '');
   if (!safe) throw new Error('Invalid subdomain for tenant database');
-  return `${env.TENANT_DB_PREFIX}${safe}`;
+  return `${process.env.TENANT_DB_PREFIX}${safe}`;
 }
 
 /** Mongoose models bound to this tenant's database (`useDb`). */
@@ -56,6 +57,8 @@ export function getTenantModels(subdomain) {
       conn.models.AssessmentAssignment ||
       conn.model('AssessmentAssignment', assessmentAssignmentSchema),
     StudentGroup: conn.models.StudentGroup || conn.model('StudentGroup', studentGroupSchema),
+    Class: conn.models.Class || conn.model('Class', classSchema),
+    ClassMember: conn.models.ClassMember || conn.model('ClassMember', classMemberSchema),
   };
 
   cacheByDbName.set(dbName, models);

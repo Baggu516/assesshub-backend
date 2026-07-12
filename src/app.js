@@ -1,8 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
-import { env } from './config/env.js';
 import { connectDb } from './config/db.js';
 import { createCorsOriginChecker, parseCorsOrigins } from './utils/corsOrigin.js';
 import { apiLimiter } from './middleware/rateLimit.middleware.js';
@@ -26,7 +26,7 @@ export function createApp() {
   app.use(helmet());
   app.use(
     cors({
-      origin: createCorsOriginChecker(parseCorsOrigins(env.CORS_ORIGIN)),
+      origin: createCorsOriginChecker(parseCorsOrigins(process.env.CORS_ORIGIN)),
       credentials: true,
     })
   );
@@ -34,7 +34,7 @@ export function createApp() {
     res.json({ ok: true, service: 'assesshub-api' });
   });
   app.use(express.json({ limit: '2mb' }));
-  app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+  app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
   app.use('/api', ensureDb, apiLimiter, routes);
   app.use(errorMiddleware);
   return app;

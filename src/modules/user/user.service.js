@@ -21,6 +21,7 @@ const ORG_LEVEL_PERMISSION_KEYS = new Set([
   PERMISSION_KEYS.USER_CREATE,
   PERMISSION_KEYS.SUBORDINATE_CREATE,
   PERMISSION_KEYS.SETTINGS_MANAGE,
+  PERMISSION_KEYS.CLASS_MANAGE,
 ]);
 
 /** Student-only permissions — teachers may grant these when creating students without holding them. */

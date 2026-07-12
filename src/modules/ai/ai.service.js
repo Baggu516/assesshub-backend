@@ -1,4 +1,3 @@
-import { env } from '../../config/env.js';
 import { dashboardForActor } from '../reports/reports.service.js';
 
 const FETCH_TIMEOUT_MS = 28_000;
@@ -25,11 +24,13 @@ const DEFAULT_CONSTRAINTS = `- Do not invent assessments, scores, students, date
 export async function buildAiSystemPrompt(models, actor, orgId, options = {}) {
   const includeWorkload = options.includeWorkload !== false;
 
-  const extraIntentions = env.AI_CHAT_INTENTIONS_EXTRA
-    ? `\nAdditional intentions (from operator configuration):\n${env.AI_CHAT_INTENTIONS_EXTRA}\n`
+  const intentionsExtra = (process.env.AI_CHAT_INTENTIONS_EXTRA ?? '').trim().slice(0, 2000);
+  const constraintsExtra = (process.env.AI_CHAT_CONSTRAINTS_EXTRA ?? '').trim().slice(0, 2000);
+  const extraIntentions = intentionsExtra
+    ? `\nAdditional intentions (from operator configuration):\n${intentionsExtra}\n`
     : '';
-  const extraConstraints = env.AI_CHAT_CONSTRAINTS_EXTRA
-    ? `\nAdditional constraints (from operator configuration):\n${env.AI_CHAT_CONSTRAINTS_EXTRA}\n`
+  const extraConstraints = constraintsExtra
+    ? `\nAdditional constraints (from operator configuration):\n${constraintsExtra}\n`
     : '';
 
   const modeBlock = options.chatIntent
@@ -73,7 +74,7 @@ async function groqChat(systemText, messages, apiKey) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: env.GROQ_CHAT_MODEL,
+        model: process.env.GROQ_CHAT_MODEL,
         messages: openAIMessages,
         max_tokens: 1024,
         temperature: 0.35,
@@ -104,7 +105,7 @@ async function groqChat(systemText, messages, apiKey) {
 }
 
 async function geminiChat(systemText, messages, apiKey) {
-  const model = encodeURIComponent(env.GEMINI_CHAT_MODEL);
+  const model = encodeURIComponent(process.env.GEMINI_CHAT_MODEL);
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
   const contents = [];
@@ -166,19 +167,19 @@ async function geminiChat(systemText, messages, apiKey) {
  */
 export async function runAiChat(provider, systemText, messages) {
   if (provider === 'groq') {
-    const key = env.GROQ_API_KEY?.trim();
+    const key = process.env.GROQ_API_KEY?.trim();
     if (!key) throw httpError(503, 'Groq is not configured (missing GROQ_API_KEY)');
     return groqChat(systemText, messages, key);
   }
 
-  const key = env.GEMINI_API_KEY?.trim();
+  const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) throw httpError(503, 'Gemini is not configured (missing GEMINI_API_KEY)');
   return geminiChat(systemText, messages, key);
 }
 
 export function aiProviderAvailability() {
   return {
-    gemini: Boolean(env.GEMINI_API_KEY?.trim()),
-    groq: Boolean(env.GROQ_API_KEY?.trim()),
+    gemini: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    groq: Boolean(process.env.GROQ_API_KEY?.trim()),
   };
 }

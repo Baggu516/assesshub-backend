@@ -1,5 +1,3 @@
-import { env } from '../config/env.js';
-
 /**
  * Resolves tenant subdomain from Host header or X-Tenant-Subdomain (dev / proxies).
  * Plain localhost with env DEFAULT_TENANT_SUBDOMAIN falls back to that org (no URL subdomain).
@@ -11,7 +9,7 @@ export function resolveSubdomainFromRequest(req) {
   }
 
   const host = req.headers.host || '';
-  const base = env.BASE_DOMAIN.toLowerCase();
+  const base = (process.env.BASE_DOMAIN || '').toLowerCase();
 
   // Strip port
   const hostname = host.split(':')[0].toLowerCase();
@@ -32,7 +30,7 @@ export function resolveSubdomainFromRequest(req) {
     hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
 
   if (subdomain == null && plainLocal) {
-    const def = env.DEFAULT_TENANT_SUBDOMAIN.trim().toLowerCase();
+    const def = (process.env.DEFAULT_TENANT_SUBDOMAIN || '').trim().toLowerCase();
     if (def) return def;
   }
 

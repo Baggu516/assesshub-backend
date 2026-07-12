@@ -1,7 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
 import mongoose from 'mongoose';
-import { env } from '../../config/env.js';
 import { extractTextFromFile, detectFileType } from './kb.extract.js';
 import { chunkText } from './kb.chunk.js';
 import {

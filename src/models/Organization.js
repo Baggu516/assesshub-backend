@@ -14,7 +14,7 @@ const organizationSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     settings: {
       timezone: { type: String, default: 'UTC' },
-      /** Optional nav label overrides. Keys: dashboard, subordinates, users, usersMember, profile, organization, settingsNav, assessments, myAssessments */
+      /** Optional nav label overrides. Keys: dashboard, subordinates, users, usersMember, profile, organization, settingsNav, assessments, myAssessments, groupStudents, classes, knowledgeBase */
       sidebarLabels: {
         dashboard: { type: String, trim: true, maxlength: 48 },
         subordinates: { type: String, trim: true, maxlength: 48 },
@@ -25,6 +25,9 @@ const organizationSchema = new mongoose.Schema(
         settingsNav: { type: String, trim: true, maxlength: 48 },
         assessments: { type: String, trim: true, maxlength: 48 },
         myAssessments: { type: String, trim: true, maxlength: 48 },
+        groupStudents: { type: String, trim: true, maxlength: 48 },
+        classes: { type: String, trim: true, maxlength: 48 },
+        knowledgeBase: { type: String, trim: true, maxlength: 48 },
       },
     },
   },

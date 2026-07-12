@@ -1,4 +1,3 @@
-import { env } from '../../config/env.js';
 import { EMBEDDING_PROVIDERS } from '../../models/KnowledgeBaseConfig.js';
 import {
   DEFAULT_EMBEDDING_MODEL,
@@ -31,7 +30,7 @@ export function embeddingProviderConfigured(provider) {
   if (!EMBEDDING_PROVIDERS.includes(provider)) return false;
   switch (provider) {
     case 'gemini':
-      return Boolean(env.GEMINI_API_KEY?.trim());
+      return Boolean(process.env.GEMINI_API_KEY?.trim());
     case 'huggingface':
       return true;
     default:
@@ -40,7 +39,7 @@ export function embeddingProviderConfigured(provider) {
 }
 
 async function embedGemini(text, model) {
-  const key = env.GEMINI_API_KEY?.trim();
+  const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) throw httpError(503, 'Gemini embeddings not configured (GEMINI_API_KEY)');
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:embedContent?key=${encodeURIComponent(key)}`;

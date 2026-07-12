@@ -1,17 +1,20 @@
-const initializedSubdomains = new Set();
+const catalogVersionBySubdomain = new Map();
+/** Bump when permission seeds / default role perms change so tenants re-sync in-process. */
+const CATALOG_VERSION = 2;
 
 const LEGACY_TASK_PERMS = ['task_create', 'task_view', 'task_update', 'task_delete'];
 
 /**
- * Idempotent: seeds Permission docs and legacy cleanup once per tenant process.
+ * Idempotent: seeds Permission docs and legacy cleanup once per tenant catalog version.
  */
 export async function ensureTenantCatalog(models, subdomain) {
-  if (initializedSubdomains.has(subdomain)) return;
+  if (catalogVersionBySubdomain.get(subdomain) === CATALOG_VERSION) return;
 
   const seeds = [
     { key: 'user_create', label: 'Create students', description: 'Invite or create students' },
     { key: 'subordinate_create', label: 'Create teachers', description: 'Add teachers under admin' },
     { key: 'settings_manage', label: 'Manage settings', description: 'Organization settings' },
+    { key: 'class_manage', label: 'Manage classes', description: 'Create classes and assign teachers/students' },
     { key: 'assessment_create', label: 'Create assessments', description: 'Build and assign assessments' },
     { key: 'assessment_view', label: 'View assessments', description: 'View assigned or created assessments' },
     { key: 'assessment_submit', label: 'Submit assessments', description: 'Take and submit assessments' },
@@ -31,6 +34,7 @@ export async function ensureTenantCatalog(models, subdomain) {
     'subordinate_create',
     'user_create',
     'settings_manage',
+    'class_manage',
     'assessment_create',
     'assessment_view',
     'assessment_submit',
@@ -64,5 +68,5 @@ export async function ensureTenantCatalog(models, subdomain) {
     { $addToSet: { permissions: { $each: adminPerms } } }
   );
 
-  initializedSubdomains.add(subdomain);
+  catalogVersionBySubdomain.set(subdomain, CATALOG_VERSION);
 }

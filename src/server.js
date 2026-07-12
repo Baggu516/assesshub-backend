@@ -1,15 +1,26 @@
+import 'dotenv/config';
+import { configureDns } from './utils/dns.js';
 import { createApp } from './app.js';
 import { connectDb } from './config/db.js';
-import { loadEnv, env } from './config/env.js';
 
-loadEnv();
+configureDns();
 
 const app = createApp();
 
 async function main() {
+  const missing = ['MONGODB_URI', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'].filter(
+    (k) => !process.env[k]
+  );
+  if (missing.length) {
+    const message = `Missing required env: ${missing.join(', ')}`;
+    if (process.env.NODE_ENV === 'production') throw new Error(message);
+    console.warn(`Warning: ${message}`);
+  }
+
   await connectDb();
-  app.listen(env.PORT, () => {
-    console.log(`API listening on port ${env.PORT} (${env.NODE_ENV})`);
+  const port = parseInt(process.env.PORT, 10);
+  app.listen(port, () => {
+    console.log(`API listening on port ${port} (${process.env.NODE_ENV})`);
   });
 }
 
