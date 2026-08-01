@@ -8,7 +8,7 @@ const feedQuery = z.object({
 });
 
 export const getDashboard = asyncHandler(async (req, res) => {
-  const data = await dashboardForActor(req.tenantModels, req.user, req.tenant.orgId);
+  const data = await dashboardForActor(req.tenantModels, req.user, req.tenant.orgId, req.query);
   res.json(data);
 });
 

@@ -72,7 +72,7 @@ export const getAssessmentAssignees = asyncHandler(async (req, res) => {
 });
 
 export const getMyAssignments = asyncHandler(async (req, res) => {
-  const result = await listMyAssignments(req.tenantModels, req.user, req.tenant.orgId);
+  const result = await listMyAssignments(req.tenantModels, req.user, req.tenant.orgId, req.query);
   res.json(result);
 });
 
@@ -102,7 +102,8 @@ export const getResults = asyncHandler(async (req, res) => {
     req.tenantModels,
     req.user,
     req.tenant.orgId,
-    req.params.id
+    req.params.id,
+    req.query
   );
   res.json(result);
 });

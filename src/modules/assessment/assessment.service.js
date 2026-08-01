@@ -51,6 +51,7 @@ function serializeAssignment(doc, extras = {}) {
     assessmentId: String(doc.assessmentId),
     studentId: String(doc.studentId),
     assignedBy: String(doc.assignedBy),
+    academicYearId: doc.academicYearId ? String(doc.academicYearId) : null,
     dueDate: doc.dueDate,
     status: doc.status,
     submittedAt: doc.submittedAt,
@@ -60,6 +61,64 @@ function serializeAssignment(doc, extras = {}) {
     createdAt: doc.createdAt,
     ...extras,
   };
+}
+
+/**
+ * Resolve academic year for assign/filter. Prefer explicit id, else current, else newest label.
+ */
+async function resolveAcademicYear(models, orgId, academicYearId) {
+  const { AcademicYear } = models;
+  const oid = orgOid(orgId);
+
+  if (academicYearId) {
+    const year = await AcademicYear.findOne({ _id: academicYearId, orgId: oid, ...ACTIVE }).lean();
+    if (!year) {
+      const err = new Error('Academic year not found');
+      err.status = 404;
+      throw err;
+    }
+    return year;
+  }
+
+  const current = await AcademicYear.findOne({ orgId: oid, isCurrent: true, ...ACTIVE }).lean();
+  if (current) return current;
+
+  return AcademicYear.findOne({ orgId: oid, ...ACTIVE }).sort({ label: -1 }).lean();
+}
+
+/**
+ * Build Mongo filter for academicYearId query param.
+ * - missing / empty → current year (legacy nulls included when that year is current)
+ * - "all" → no year filter
+ * - specific id → that year only
+ */
+async function academicYearAssignmentFilter(models, orgId, academicYearIdParam) {
+  if (academicYearIdParam === 'all') {
+    return { filter: {}, year: null };
+  }
+
+  const year = await resolveAcademicYear(
+    models,
+    orgId,
+    academicYearIdParam && academicYearIdParam !== 'current' ? academicYearIdParam : undefined
+  );
+
+  if (!year) {
+    return { filter: {}, year: null };
+  }
+
+  const yearOid = year._id;
+  // Legacy assignments (no year) stay visible under the current year so nothing "disappears"
+  if (year.isCurrent) {
+    return {
+      filter: {
+        $or: [{ academicYearId: yearOid }, { academicYearId: null }, { academicYearId: { $exists: false } }],
+      },
+      year,
+    };
+  }
+
+  return { filter: { academicYearId: yearOid }, year };
 }
 
 function studentDisplayName(u) {
@@ -338,18 +397,31 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
     }
   }
 
+  const year = await resolveAcademicYear(models, orgId, body.academicYearId);
+  if (!year) {
+    const err = new Error('No academic year configured. Create one under Academic years first.');
+    err.status = 400;
+    throw err;
+  }
+
   const maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
   const created = [];
 
   for (const studentId of studentIds) {
     const assignment = await AssessmentAssignment.findOneAndUpdate(
-      { orgId: oid, assessmentId: assessment._id, studentId },
+      {
+        orgId: oid,
+        assessmentId: assessment._id,
+        studentId,
+        academicYearId: year._id,
+      },
       {
         $setOnInsert: {
           orgId: oid,
           assessmentId: assessment._id,
           studentId: new mongoose.Types.ObjectId(studentId),
           assignedBy: actor._id,
+          academicYearId: year._id,
           dueDate: body.dueDate || null,
           status: 'pending',
           maxScore,
@@ -359,14 +431,18 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
       },
       { upsert: true, new: true }
     );
-    created.push(serializeAssignment(assignment.toObject()));
+    created.push(
+      serializeAssignment(assignment.toObject(), {
+        academicYearLabel: year.label,
+      })
+    );
   }
 
-  return { assignments: created };
+  return { assignments: created, academicYear: { id: String(year._id), label: year.label } };
 }
 
-export async function listMyAssignments(models, actor, orgId) {
-  const { AssessmentAssignment, Assessment, User } = models;
+export async function listMyAssignments(models, actor, orgId, query = {}) {
+  const { AssessmentAssignment, Assessment, User, AcademicYear } = models;
   const oid = orgOid(orgId);
 
   if (!actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_VIEW)) {
@@ -375,12 +451,20 @@ export async function listMyAssignments(models, actor, orgId) {
     throw err;
   }
 
-  const filter =
+  const { filter: yearFilter, year } = await academicYearAssignmentFilter(
+    models,
+    orgId,
+    query.academicYearId
+  );
+
+  const baseFilter =
     actor.hierarchyRole === 'user'
       ? { orgId: oid, studentId: actor._id }
       : canCreateAssessment(actor)
         ? { orgId: oid, assignedBy: actor._id }
         : { orgId: oid, studentId: actor._id };
+
+  const filter = { ...baseFilter, ...yearFilter };
 
   const assignments = await AssessmentAssignment.find(filter).sort({ createdAt: -1 }).lean();
   const assessmentIds = [...new Set(assignments.map((a) => String(a.assessmentId)))];
@@ -391,14 +475,23 @@ export async function listMyAssignments(models, actor, orgId) {
   const students = await User.find({ _id: { $in: studentIds } }).lean();
   const studentMap = new Map(students.map((s) => [String(s._id), s]));
 
+  const yearIds = [...new Set(assignments.map((a) => (a.academicYearId ? String(a.academicYearId) : null)).filter(Boolean))];
+  const years = yearIds.length
+    ? await AcademicYear.find({ _id: { $in: yearIds } }).lean()
+    : [];
+  const yearMap = new Map(years.map((y) => [String(y._id), y]));
+
   return {
+    academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
     assignments: assignments.map((a) => {
       const assessment = assessmentMap.get(String(a.assessmentId));
       const student = studentMap.get(String(a.studentId));
+      const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
       return serializeAssignment(a, {
         assessmentTitle: assessment?.title || 'Unknown',
         assessmentStatus: assessment?.status,
         studentLabel: student ? studentDisplayName(student) : 'Unknown',
+        academicYearLabel: ay?.label || null,
       });
     }),
   };
@@ -550,14 +643,14 @@ export async function submitAssignment(models, actor, orgId, assignmentId, body)
   };
 }
 
-export async function getAssessmentResults(models, actor, orgId, assessmentId) {
+export async function getAssessmentResults(models, actor, orgId, assessmentId, query = {}) {
   if (!canCreateAssessment(actor)) {
     const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }
 
-  const { Assessment, AssessmentAssignment, User } = models;
+  const { Assessment, AssessmentAssignment, User, AcademicYear } = models;
   const oid = orgOid(orgId);
 
   const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE }).lean();
@@ -573,18 +666,39 @@ export async function getAssessmentResults(models, actor, orgId, assessmentId) {
     throw err;
   }
 
-  const assignments = await AssessmentAssignment.find({ orgId: oid, assessmentId }).sort({ createdAt: -1 }).lean();
+  const { filter: yearFilter, year } = await academicYearAssignmentFilter(
+    models,
+    orgId,
+    query.academicYearId
+  );
+
+  const assignments = await AssessmentAssignment.find({
+    orgId: oid,
+    assessmentId,
+    ...yearFilter,
+  })
+    .sort({ createdAt: -1 })
+    .lean();
   const studentIds = assignments.map((a) => a.studentId);
   const students = await User.find({ _id: { $in: studentIds } }).lean();
   const studentMap = new Map(students.map((s) => [String(s._id), s]));
 
+  const yearIds = [...new Set(assignments.map((a) => (a.academicYearId ? String(a.academicYearId) : null)).filter(Boolean))];
+  const years = yearIds.length
+    ? await AcademicYear.find({ _id: { $in: yearIds } }).lean()
+    : [];
+  const yearMap = new Map(years.map((y) => [String(y._id), y]));
+
   return {
     assessment: serializeAssessment(assessment),
+    academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
     results: assignments.map((a) => {
       const student = studentMap.get(String(a.studentId));
+      const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
       return serializeAssignment(a, {
         studentLabel: student ? studentDisplayName(student) : 'Unknown',
         studentEmail: student?.email,
+        academicYearLabel: ay?.label || null,
       });
     }),
   };

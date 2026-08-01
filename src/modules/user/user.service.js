@@ -4,9 +4,9 @@ import { hashPassword } from '../../utils/hash.js';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
 import { sendInvitationEmail } from '../../utils/mailer.js';
 import { Organization } from '../../models/Organization.js';
+import { listAssignableStudents, mapStudentClassesForTeacher } from '../shared/studentScope.service.js';
 
 const DEFAULT_SUBORDINATE_PERMS = [
-  PERMISSION_KEYS.USER_CREATE,
   PERMISSION_KEYS.ASSESSMENT_CREATE,
   PERMISSION_KEYS.ASSESSMENT_VIEW,
 ];
@@ -15,33 +15,6 @@ const DEFAULT_MEMBER_PERMS = [
   PERMISSION_KEYS.ASSESSMENT_VIEW,
   PERMISSION_KEYS.ASSESSMENT_SUBMIT,
 ];
-
-/** Not assignable to line members (`hierarchyRole: user`) — prevents privilege escalation. */
-const ORG_LEVEL_PERMISSION_KEYS = new Set([
-  PERMISSION_KEYS.USER_CREATE,
-  PERMISSION_KEYS.SUBORDINATE_CREATE,
-  PERMISSION_KEYS.SETTINGS_MANAGE,
-  PERMISSION_KEYS.CLASS_MANAGE,
-]);
-
-/** Student-only permissions — teachers may grant these when creating students without holding them. */
-const MEMBER_ONLY_PERMISSION_KEYS = new Set([PERMISSION_KEYS.ASSESSMENT_SUBMIT]);
-
-function assertMemberPermissionsFromLead(creator, keys) {
-  for (const key of keys) {
-    if (MEMBER_ONLY_PERMISSION_KEYS.has(key)) continue;
-    if (!creator.permissions.includes(key)) {
-      const err = new Error(`Cannot assign permission you do not have: ${key}`);
-      err.status = 403;
-      throw err;
-    }
-    if (ORG_LEVEL_PERMISSION_KEYS.has(key)) {
-      const err = new Error(`Team members cannot be granted: ${key}`);
-      err.status = 403;
-      throw err;
-    }
-  }
-}
 
 /** Admins without settings_manage may only grant keys they themselves hold. */
 function assertAssignablePermissionSubset(actor, keys) {
@@ -75,27 +48,65 @@ function isSubordinateActor(actor) {
 }
 
 /**
- * List users in the org. Teachers only see direct reports (`parentUserId` = self, role `user`).
- * Administrators see all students in the org.
+ * List students in the org.
+ * Admins see all students. Teachers see students in their classes (parentUserId fallback for legacy).
  */
 export async function listUsers(models, orgId, actor, { search, page = 1, limit = 20 }) {
   const { User } = models;
   const orgOid = new mongoose.Types.ObjectId(String(orgId));
+  const skip = (page - 1) * limit;
+  const searchTrim = search && String(search).trim() ? String(search).trim() : '';
 
-  const baseFilter = isSubordinateActor(actor)
-    ? {
-        orgId: orgOid,
-        parentUserId: actor._id,
-        hierarchyRole: 'user',
-      }
-    : {
-        orgId: orgOid,
-        hierarchyRole: 'user',
-      };
+  if (isSubordinateActor(actor)) {
+    const [assignees, classMap] = await Promise.all([
+      listAssignableStudents(models, actor, orgId),
+      mapStudentClassesForTeacher(models, actor, orgId),
+    ]);
+    let filtered = assignees.map((a) => ({
+      ...a,
+      classes: classMap.get(a.id) || [],
+    }));
+    if (searchTrim) {
+      const rx = new RegExp(searchTrim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      filtered = filtered.filter(
+        (a) =>
+          rx.test(a.email) ||
+          rx.test(a.label) ||
+          a.classes.some((c) => rx.test(c.name) || rx.test(c.academicYear || ''))
+      );
+    }
+    filtered.sort((a, b) => {
+      const ca = a.classes[0]?.name || '';
+      const cb = b.classes[0]?.name || '';
+      if (ca !== cb) return ca.localeCompare(cb);
+      return (a.label || a.email).localeCompare(b.label || b.email);
+    });
+    const total = filtered.length;
+    const pageSlice = filtered.slice(skip, skip + limit);
+    const pageIds = pageSlice.map((a) => a.id);
+    if (!pageIds.length) {
+      return { users: [], total, page, limit };
+    }
+    const items = await User.find({ _id: { $in: pageIds } }).lean();
+    const byId = new Map(items.map((u) => [String(u._id), u]));
+    const users = pageSlice
+      .map((row) => {
+        const doc = byId.get(row.id);
+        if (!doc) return null;
+        return { ...serializeUserDoc(doc), classes: row.classes };
+      })
+      .filter(Boolean);
+    return { users, total, page, limit };
+  }
+
+  const baseFilter = {
+    orgId: orgOid,
+    hierarchyRole: 'user',
+  };
 
   let q;
-  if (search && String(search).trim()) {
-    const escaped = String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  if (searchTrim) {
+    const escaped = searchTrim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp(escaped, 'i');
     q = {
       $and: [baseFilter, { $or: [{ email: rx }, { firstName: rx }, { lastName: rx }] }],
@@ -104,15 +115,12 @@ export async function listUsers(models, orgId, actor, { search, page = 1, limit 
     q = baseFilter;
   }
 
-  const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
     User.find(q).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     User.countDocuments(q),
   ]);
 
-  const users = items.map((u) => serializeUserDoc(u));
-
-  return { users, total, page, limit };
+  return { users: items.map((u) => serializeUserDoc(u)), total, page, limit };
 }
 
 export async function listSubordinates(models, orgId, adminId) {
@@ -185,6 +193,11 @@ export async function createMember(models, creator, orgId, body) {
     err.status = 403;
     throw err;
   }
+  if (creator.hierarchyRole !== 'admin') {
+    const err = new Error('Only administrators may create students. Teachers see students via class assignment.');
+    err.status = 403;
+    throw err;
+  }
 
   const dup = await User.findOne({ orgId, email: body.email.toLowerCase() });
   if (dup) {
@@ -193,16 +206,12 @@ export async function createMember(models, creator, orgId, body) {
     throw err;
   }
 
-  let parentUserId = creator._id;
-  if (creator.hierarchyRole === 'admin') {
-    if (!body.parentUserId) {
-      const err = new Error('parentUserId is required when administrator creates a member');
-      err.status = 400;
-      throw err;
-    }
+  /** Class membership links teachers ↔ students; parentUserId is optional legacy only. */
+  let parentUserId = null;
+  if (body.parentUserId) {
     const parent = await User.findOne({ _id: body.parentUserId, orgId });
     if (!parent || parent.hierarchyRole !== 'subordinate') {
-      const err = new Error('parentUserId must reference a subordinate lead in this organization');
+      const err = new Error('parentUserId must reference a teacher in this organization');
       err.status = 400;
       throw err;
     }
@@ -226,10 +235,7 @@ export async function createMember(models, creator, orgId, body) {
   const password = body.password || crypto.randomBytes(12).toString('base64url');
   const passwordHash = await hashPassword(password);
 
-  let memberPermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
-  if (creator.hierarchyRole === 'subordinate') {
-    assertMemberPermissionsFromLead(creator, memberPermissions);
-  }
+  const memberPermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
 
   const user = await User.create({
     orgId,
@@ -257,11 +263,16 @@ export async function updateUser(models, actor, orgId, userId, body) {
 
   const parentMatchesActor = target.parentUserId?.toString() === actor._id.toString();
   const isSelf = actor._id.equals(target._id);
+  const isAdminManager =
+    actor.hierarchyRole === 'admin' &&
+    (actor.permissions.includes(PERMISSION_KEYS.SETTINGS_MANAGE) ||
+      actor.permissions.includes(PERMISSION_KEYS.USER_CREATE) ||
+      actor.permissions.includes(PERMISSION_KEYS.SUBORDINATE_CREATE));
 
   const canManage =
-    actor.permissions.includes(PERMISSION_KEYS.SETTINGS_MANAGE) ||
-    (actor.permissions.includes(PERMISSION_KEYS.USER_CREATE) && (parentMatchesActor || isSelf)) ||
-    (actor.permissions.includes(PERMISSION_KEYS.SUBORDINATE_CREATE) && parentMatchesActor);
+    isAdminManager ||
+    (actor.permissions.includes(PERMISSION_KEYS.SUBORDINATE_CREATE) && parentMatchesActor) ||
+    isSelf;
 
   if (!canManage && !actor._id.equals(target._id)) {
     const err = new Error('Forbidden');
@@ -271,23 +282,17 @@ export async function updateUser(models, actor, orgId, userId, body) {
 
   if (body.permissions !== undefined) {
     const isSettingsManager = actor.permissions.includes(PERMISSION_KEYS.SETTINGS_MANAGE);
-    const isLeadForMember =
-      actor.hierarchyRole === 'subordinate' &&
-      target.hierarchyRole === 'user' &&
-      target.parentUserId?.toString() === actor._id.toString();
     /** Admin may tune subordinate leads & members; full catalog only with settings_manage. */
     const isAdminEditingNonAdmin =
       actor.hierarchyRole === 'admin' && target.hierarchyRole !== 'admin';
 
-    if (!isSettingsManager && !isLeadForMember && !isAdminEditingNonAdmin) {
+    if (!isSettingsManager && !isAdminEditingNonAdmin) {
       const err = new Error('Forbidden: cannot update permissions for this user');
       err.status = 403;
       throw err;
     }
 
-    if (isLeadForMember && !isSettingsManager) {
-      assertMemberPermissionsFromLead(actor, body.permissions);
-    } else if (isAdminEditingNonAdmin && !isSettingsManager) {
+    if (isAdminEditingNonAdmin && !isSettingsManager) {
       assertAssignablePermissionSubset(actor, body.permissions);
     }
   }
@@ -349,6 +354,11 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
     err.status = 403;
     throw err;
   }
+  if (actor.hierarchyRole !== 'admin') {
+    const err = new Error('Only administrators may invite students');
+    err.status = 403;
+    throw err;
+  }
 
   const dup = await User.findOne({ orgId, email: body.email.toLowerCase() });
   if (dup) {
@@ -357,13 +367,8 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
     throw err;
   }
 
-  let parentUserId = actor._id;
-  if (actor.hierarchyRole === 'admin') {
-    if (!body.parentUserId) {
-      const err = new Error('parentUserId is required');
-      err.status = 400;
-      throw err;
-    }
+  let parentUserId = null;
+  if (body.parentUserId) {
     const parent = await User.findOne({ _id: body.parentUserId, orgId });
     if (!parent || parent.hierarchyRole !== 'subordinate') {
       const err = new Error('Invalid parentUserId');
@@ -378,10 +383,7 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
 
   const memRole = await Role.findOne({ orgId, hierarchy: 'user' });
 
-  let invitePermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
-  if (actor.hierarchyRole === 'subordinate') {
-    assertMemberPermissionsFromLead(actor, invitePermissions);
-  }
+  const invitePermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
 
   const user = await User.create({
     orgId,

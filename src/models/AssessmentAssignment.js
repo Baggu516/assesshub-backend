@@ -19,6 +19,13 @@ export const assessmentAssignmentSchema = new mongoose.Schema(
     assessmentId: { type: mongoose.Schema.Types.ObjectId, ref: 'Assessment', required: true, index: true },
     studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    /** Academic year this assignment belongs to (promotions / history stay separate) */
+    academicYearId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AcademicYear',
+      default: null,
+      index: true,
+    },
     dueDate: { type: Date, default: null },
     status: { type: String, enum: ASSIGNMENT_STATUSES, default: 'pending' },
     submittedAt: { type: Date, default: null },
@@ -30,4 +37,10 @@ export const assessmentAssignmentSchema = new mongoose.Schema(
 );
 
 assessmentAssignmentSchema.index({ orgId: 1, studentId: 1, status: 1 });
-assessmentAssignmentSchema.index({ orgId: 1, assessmentId: 1, studentId: 1 }, { unique: true });
+assessmentAssignmentSchema.index({ orgId: 1, studentId: 1, academicYearId: 1 });
+assessmentAssignmentSchema.index({ orgId: 1, assignedBy: 1, academicYearId: 1 });
+/** Same quiz can be reassigned in a different year */
+assessmentAssignmentSchema.index(
+  { orgId: 1, assessmentId: 1, studentId: 1, academicYearId: 1 },
+  { unique: true }
+);

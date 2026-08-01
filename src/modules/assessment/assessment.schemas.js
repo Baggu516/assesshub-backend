@@ -58,6 +58,8 @@ export const assignAssessmentSchema = z
     studentIds: z.array(z.string().min(1)).optional().default([]),
     groupIds: z.array(z.string().min(1)).optional().default([]),
     dueDate: z.coerce.date().optional().nullable(),
+    /** Defaults to the organization's current academic year */
+    academicYearId: z.string().min(1).optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.studentIds.length && !data.groupIds.length) {
@@ -67,6 +69,15 @@ export const assignAssessmentSchema = z
       });
     }
   });
+
+export const listMyAssignmentsQuery = z.object({
+  /** Omit / empty = current year; "all" = every year */
+  academicYearId: z.string().optional(),
+});
+
+export const listResultsQuery = z.object({
+  academicYearId: z.string().optional(),
+});
 
 const answerInputSchema = z
   .object({

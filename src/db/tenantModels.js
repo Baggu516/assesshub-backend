@@ -56,9 +56,16 @@ export function getTenantModels(subdomain) {
     KnowledgeChunk:
       conn.models.KnowledgeChunk || conn.model('KnowledgeChunk', knowledgeChunkSchema),
     Assessment: conn.models.Assessment || conn.model('Assessment', assessmentSchema),
-    AssessmentAssignment:
-      conn.models.AssessmentAssignment ||
-      conn.model('AssessmentAssignment', assessmentAssignmentSchema),
+    AssessmentAssignment: (() => {
+      const m =
+        conn.models.AssessmentAssignment ||
+        conn.model('AssessmentAssignment', assessmentAssignmentSchema);
+      // Old unique key blocked re-assigning the same quiz in a new academic year
+      m.collection
+        .dropIndex('orgId_1_assessmentId_1_studentId_1')
+        .catch(() => {});
+      return m;
+    })(),
     StudentGroup: conn.models.StudentGroup || conn.model('StudentGroup', studentGroupSchema),
     Class: conn.models.Class || conn.model('Class', classSchema),
     ClassMember: conn.models.ClassMember || conn.model('ClassMember', classMemberSchema),

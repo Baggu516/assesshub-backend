@@ -1,10 +1,53 @@
-const ACTIVE_ASSESSMENT = { deletedAt: null };
+import mongoose from 'mongoose';
 
-export async function dashboardForActor(models, actor, orgId) {
+const ACTIVE_ASSESSMENT = { deletedAt: null };
+const ACTIVE_YEAR = { deletedAt: null };
+
+async function resolveYearFilter(models, orgId, academicYearIdParam) {
+  if (academicYearIdParam === 'all') {
+    return { clause: {}, year: null };
+  }
+
+  const { AcademicYear } = models;
+  const oid = new mongoose.Types.ObjectId(String(orgId));
+
+  let year = null;
+  if (academicYearIdParam && academicYearIdParam !== 'current') {
+    year = await AcademicYear.findOne({ _id: academicYearIdParam, orgId: oid, ...ACTIVE_YEAR }).lean();
+  } else {
+    year = await AcademicYear.findOne({ orgId: oid, isCurrent: true, ...ACTIVE_YEAR }).lean();
+    if (!year) {
+      year = await AcademicYear.findOne({ orgId: oid, ...ACTIVE_YEAR }).sort({ label: -1 }).lean();
+    }
+  }
+
+  if (!year) {
+    return { clause: {}, year: null };
+  }
+
+  if (year.isCurrent) {
+    return {
+      clause: {
+        $or: [
+          { academicYearId: year._id },
+          { academicYearId: null },
+          { academicYearId: { $exists: false } },
+        ],
+      },
+      year,
+    };
+  }
+
+  return { clause: { academicYearId: year._id }, year };
+}
+
+export async function dashboardForActor(models, actor, orgId, query = {}) {
   const { User, Assessment, AssessmentAssignment } = models;
 
   const now = new Date();
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const { clause: yearClause, year } = await resolveYearFilter(models, orgId, query.academicYearId);
+  const yearMeta = year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null;
 
   if (actor.hierarchyRole === 'admin') {
     const [totalTeachers, totalStudents, totalAssessments, publishedAssessments, submissionsThisMonth] =
@@ -17,11 +60,13 @@ export async function dashboardForActor(models, actor, orgId) {
           orgId,
           status: 'submitted',
           submittedAt: { $gte: startOfMonth },
+          ...yearClause,
         }),
       ]);
 
     return {
       scope: 'organization',
+      academicYear: yearMeta,
       totalTeachers,
       totalStudents,
       totalAssessments,
@@ -32,15 +77,18 @@ export async function dashboardForActor(models, actor, orgId) {
 
   if (actor.hierarchyRole === 'subordinate') {
     const assessmentFilter = { orgId, createdBy: actor._id, ...ACTIVE_ASSESSMENT };
-    const [totalAssessments, publishedAssessments, pendingSubmissions, completedSubmissions] = await Promise.all([
-      Assessment.countDocuments(assessmentFilter),
-      Assessment.countDocuments({ ...assessmentFilter, status: 'published' }),
-      AssessmentAssignment.countDocuments({ orgId, assignedBy: actor._id, status: 'pending' }),
-      AssessmentAssignment.countDocuments({ orgId, assignedBy: actor._id, status: 'submitted' }),
-    ]);
+    const assignmentBase = { orgId, assignedBy: actor._id, ...yearClause };
+    const [totalAssessments, publishedAssessments, pendingSubmissions, completedSubmissions] =
+      await Promise.all([
+        Assessment.countDocuments(assessmentFilter),
+        Assessment.countDocuments({ ...assessmentFilter, status: 'published' }),
+        AssessmentAssignment.countDocuments({ ...assignmentBase, status: 'pending' }),
+        AssessmentAssignment.countDocuments({ ...assignmentBase, status: 'submitted' }),
+      ]);
 
     return {
       scope: 'teacher',
+      academicYear: yearMeta,
       totalAssessments,
       publishedAssessments,
       pendingSubmissions,
@@ -48,7 +96,7 @@ export async function dashboardForActor(models, actor, orgId) {
     };
   }
 
-  const mine = { orgId, studentId: actor._id };
+  const mine = { orgId, studentId: actor._id, ...yearClause };
   const [assigned, pending, submitted, submittedDocs] = await Promise.all([
     AssessmentAssignment.countDocuments(mine),
     AssessmentAssignment.countDocuments({ ...mine, status: 'pending' }),
@@ -67,6 +115,7 @@ export async function dashboardForActor(models, actor, orgId) {
 
   return {
     scope: 'student',
+    academicYear: yearMeta,
     assignedAssessments: assigned,
     pendingAssessments: pending,
     submittedAssessments: submitted,

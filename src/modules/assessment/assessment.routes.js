@@ -10,6 +10,8 @@ import {
   assignAssessmentSchema,
   submitAssessmentSchema,
   listAssessmentQuery,
+  listMyAssignmentsQuery,
+  listResultsQuery,
 } from './assessment.schemas.js';
 import {
   postAssessment,
@@ -33,6 +35,7 @@ r.get('/assignees', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), getAss
 r.get(
   '/assignments/my',
   requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW),
+  validateQuery(listMyAssignmentsQuery),
   getMyAssignments
 );
 r.get(
@@ -68,6 +71,11 @@ r.post(
   requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
   postAssignAssessment
 );
-r.get('/:id/results', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), getResults);
+r.get(
+  '/:id/results',
+  validateQuery(listResultsQuery),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  getResults
+);
 
 export default r;

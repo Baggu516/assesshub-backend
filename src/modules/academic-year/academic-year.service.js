@@ -29,13 +29,8 @@ function serialize(doc) {
   };
 }
 
-export async function listAcademicYears(models, actor, orgId) {
-  if (!canManage(actor) && actor.hierarchyRole !== 'subordinate') {
-    const err = new Error('Forbidden');
-    err.status = 403;
-    throw err;
-  }
-
+export async function listAcademicYears(models, _actor, orgId) {
+  // Any authenticated tenant user may list years (students filter My assessments by year).
   const { AcademicYear } = models;
   const years = await AcademicYear.find({ orgId: orgOid(orgId), ...ACTIVE })
     .sort({ label: -1 })
@@ -43,13 +38,7 @@ export async function listAcademicYears(models, actor, orgId) {
   return { academicYears: years.map(serialize) };
 }
 
-export async function getAcademicYear(models, actor, orgId, id) {
-  if (!canManage(actor) && actor.hierarchyRole !== 'subordinate') {
-    const err = new Error('Forbidden');
-    err.status = 403;
-    throw err;
-  }
-
+export async function getAcademicYear(models, _actor, orgId, id) {
   const { AcademicYear } = models;
   const doc = await AcademicYear.findOne({ _id: id, orgId: orgOid(orgId), ...ACTIVE }).lean();
   if (!doc) {

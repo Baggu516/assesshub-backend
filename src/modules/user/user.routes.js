@@ -30,7 +30,12 @@ const r = Router();
 
 r.use(tenantMiddleware, requireAuth);
 
-r.get('/', validateQuery(listQuery), requirePermission(PERMISSION_KEYS.USER_CREATE), getUsers);
+r.get(
+  '/',
+  validateQuery(listQuery),
+  requirePermission(PERMISSION_KEYS.USER_CREATE, PERMISSION_KEYS.ASSESSMENT_CREATE),
+  getUsers
+);
 r.get('/subordinates-tree', requirePermission(PERMISSION_KEYS.SUBORDINATE_CREATE), getSubordinates);
 r.post(
   '/subordinates',

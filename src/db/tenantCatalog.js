@@ -1,6 +1,6 @@
 const catalogVersionBySubdomain = new Map();
 /** Bump when permission seeds / default role perms change so tenants re-sync in-process. */
-const CATALOG_VERSION = 2;
+const CATALOG_VERSION = 3;
 
 const LEGACY_TASK_PERMS = ['task_create', 'task_view', 'task_update', 'task_delete'];
 
@@ -11,7 +11,7 @@ export async function ensureTenantCatalog(models, subdomain) {
   if (catalogVersionBySubdomain.get(subdomain) === CATALOG_VERSION) return;
 
   const seeds = [
-    { key: 'user_create', label: 'Create students', description: 'Invite or create students' },
+    { key: 'user_create', label: 'Create students', description: 'Invite or create students (admin)' },
     { key: 'subordinate_create', label: 'Create teachers', description: 'Add teachers under admin' },
     { key: 'settings_manage', label: 'Manage settings', description: 'Organization settings' },
     { key: 'class_manage', label: 'Manage classes', description: 'Create classes and assign teachers/students' },
@@ -28,7 +28,8 @@ export async function ensureTenantCatalog(models, subdomain) {
 
   await Permission.deleteMany({ key: { $in: LEGACY_TASK_PERMS } });
 
-  const teacherPerms = ['user_create', 'assessment_create', 'assessment_view'];
+  /** Teachers view class students and run assessments — they do not create student accounts. */
+  const teacherPerms = ['assessment_create', 'assessment_view'];
   const studentPerms = ['assessment_view', 'assessment_submit'];
   const adminPerms = [
     'subordinate_create',
@@ -54,6 +55,7 @@ export async function ensureTenantCatalog(models, subdomain) {
   );
 
   await User.updateMany({}, { $pull: { permissions: { $in: LEGACY_TASK_PERMS } } });
+  await User.updateMany({ hierarchyRole: 'subordinate' }, { $pull: { permissions: 'user_create' } });
 
   await User.updateMany(
     { hierarchyRole: 'subordinate' },

@@ -14,7 +14,10 @@ function studentDisplayName(u) {
 }
 
 function canManageGroups(actor) {
-  return actor.permissions.includes(PERMISSION_KEYS.USER_CREATE);
+  return (
+    actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_CREATE) ||
+    actor.permissions.includes(PERMISSION_KEYS.USER_CREATE)
+  );
 }
 
 function serializeGroup(doc, extras = {}) {
@@ -65,7 +68,7 @@ async function validateStudentIds(models, actor, orgId, studentIds) {
 
 export async function listStudentGroups(models, actor, orgId) {
   if (!canManageGroups(actor)) {
-    const err = new Error('Missing permission: user_create');
+    const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }
@@ -98,7 +101,7 @@ export async function listStudentGroups(models, actor, orgId) {
 
 export async function getStudentGroup(models, actor, orgId, groupId) {
   if (!canManageGroups(actor)) {
-    const err = new Error('Missing permission: user_create');
+    const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }
@@ -119,7 +122,7 @@ export async function getStudentGroup(models, actor, orgId, groupId) {
 
 export async function createStudentGroup(models, actor, orgId, body) {
   if (!canManageGroups(actor)) {
-    const err = new Error('Missing permission: user_create');
+    const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }
@@ -140,7 +143,7 @@ export async function createStudentGroup(models, actor, orgId, body) {
 
 export async function updateStudentGroup(models, actor, orgId, groupId, body) {
   if (!canManageGroups(actor)) {
-    const err = new Error('Missing permission: user_create');
+    const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }
@@ -166,7 +169,7 @@ export async function updateStudentGroup(models, actor, orgId, groupId, body) {
 
 export async function deleteStudentGroup(models, actor, orgId, groupId) {
   if (!canManageGroups(actor)) {
-    const err = new Error('Missing permission: user_create');
+    const err = new Error('Missing permission: assessment_create');
     err.status = 403;
     throw err;
   }

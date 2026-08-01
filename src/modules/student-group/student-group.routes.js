@@ -15,7 +15,11 @@ import {
 
 const r = Router();
 
-r.use(tenantMiddleware, requireAuth, requirePermission(PERMISSION_KEYS.USER_CREATE));
+r.use(
+  tenantMiddleware,
+  requireAuth,
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.USER_CREATE)
+);
 
 r.get('/', getStudentGroups);
 r.post('/', validateBody(createStudentGroupSchema), postStudentGroup);
