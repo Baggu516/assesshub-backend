@@ -14,6 +14,9 @@ import { assessmentAssignmentSchema } from '../models/AssessmentAssignment.js';
 import { studentGroupSchema } from '../models/StudentGroup.js';
 import { classSchema } from '../models/Class.js';
 import { classMemberSchema } from '../models/ClassMember.js';
+import { academicYearSchema } from '../models/AcademicYear.js';
+import { classMasterSchema } from '../models/ClassMaster.js';
+import { enrollmentSchema } from '../models/Enrollment.js';
 
 const cacheByDbName = new Map();
 
@@ -59,6 +62,9 @@ export function getTenantModels(subdomain) {
     StudentGroup: conn.models.StudentGroup || conn.model('StudentGroup', studentGroupSchema),
     Class: conn.models.Class || conn.model('Class', classSchema),
     ClassMember: conn.models.ClassMember || conn.model('ClassMember', classMemberSchema),
+    AcademicYear: conn.models.AcademicYear || conn.model('AcademicYear', academicYearSchema),
+    ClassMaster: conn.models.ClassMaster || conn.model('ClassMaster', classMasterSchema),
+    Enrollment: conn.models.Enrollment || conn.model('Enrollment', enrollmentSchema),
   };
 
   cacheByDbName.set(dbName, models);

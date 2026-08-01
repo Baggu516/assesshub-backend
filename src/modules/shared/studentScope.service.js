@@ -11,10 +11,10 @@ function studentDisplayName(u) {
 
 /**
  * Students a teacher (or admin) may manage or assign assessments to.
- * Prefer class membership; keep parentUserId as fallback for legacy data.
+ * Prefer class membership / enrollments; keep parentUserId as fallback for legacy data.
  */
 export async function listAssignableStudents(models, actor, orgId) {
-  const { User, ClassMember } = models;
+  const { User, ClassMember, Enrollment } = models;
   const oid = orgOid(orgId);
 
   if (actor.hierarchyRole === 'admin') {
@@ -47,16 +47,28 @@ export async function listAssignableStudents(models, actor, orgId) {
     const classStudentIds = new Set();
 
     if (classIds.length) {
-      const studentMemberships = await ClassMember.find({
-        orgId: oid,
-        classId: { $in: classIds },
-        role: 'student',
-        isActive: true,
-      })
-        .select('userId')
-        .lean();
+      const [studentMemberships, enrollments] = await Promise.all([
+        ClassMember.find({
+          orgId: oid,
+          classId: { $in: classIds },
+          role: 'student',
+          isActive: true,
+        })
+          .select('userId')
+          .lean(),
+        Enrollment.find({
+          orgId: oid,
+          academicClassId: { $in: classIds },
+          isActive: true,
+        })
+          .select('studentId')
+          .lean(),
+      ]);
       for (const m of studentMemberships) {
         classStudentIds.add(String(m.userId));
+      }
+      for (const e of enrollments) {
+        classStudentIds.add(String(e.studentId));
       }
     }
 

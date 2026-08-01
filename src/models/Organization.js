@@ -12,6 +12,15 @@ const organizationSchema = new mongoose.Schema(
       match: [/^[a-z0-9-]{2,63}$/, 'Invalid subdomain'],
     },
     isActive: { type: Boolean, default: true },
+    /**
+     * assessments_only — core assessments only (no dashboard AI / knowledge base)
+     * ai_dashboard — assessments + dashboard AI chat + knowledge base
+     */
+    plan: {
+      type: String,
+      enum: ['assessments_only', 'ai_dashboard'],
+      default: 'assessments_only',
+    },
     settings: {
       timezone: { type: String, default: 'UTC' },
       /** Optional nav label overrides. Keys: dashboard, subordinates, users, usersMember, profile, organization, settingsNav, assessments, myAssessments, groupStudents, classes, knowledgeBase */

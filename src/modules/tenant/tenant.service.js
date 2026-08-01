@@ -10,6 +10,7 @@ export function tenantResponse(org) {
     name: org.name,
     subdomain: org.subdomain,
     isActive: org.isActive !== false,
+    plan: org.plan || 'ai_dashboard',
     settings: org.settings,
     createdAt: org.createdAt,
     updatedAt: org.updatedAt,

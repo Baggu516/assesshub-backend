@@ -11,6 +11,9 @@ import kbRoutes from '../modules/kb/kb.routes.js';
 import assessmentRoutes from '../modules/assessment/assessment.routes.js';
 import studentGroupRoutes from '../modules/student-group/student-group.routes.js';
 import classRoutes from '../modules/class/class.routes.js';
+import academicYearRoutes from '../modules/academic-year/academic-year.routes.js';
+import classMasterRoutes from '../modules/class-master/class-master.routes.js';
+import promotionRoutes from '../modules/promotion/promotion.routes.js';
 
 const r = Router();
 
@@ -29,6 +32,9 @@ r.use('/kb', kbRoutes);
 r.use('/assessments', assessmentRoutes);
 r.use('/student-groups', studentGroupRoutes);
 r.use('/classes', classRoutes);
+r.use('/academic-years', academicYearRoutes);
+r.use('/class-masters', classMasterRoutes);
+r.use('/promotions', promotionRoutes);
 r.use('/platform', platformRoutes);
 
 export default r;

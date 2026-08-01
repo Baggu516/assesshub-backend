@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
+import { logActivity } from '../../utils/activity.js';
 import { allowedStudentIdSet, listAssignableStudents } from '../shared/studentScope.service.js';
 import { resolveGroupStudentIds } from '../student-group/student-group.service.js';
 
@@ -117,7 +118,7 @@ export async function listAssessmentAssignees(models, actor, orgId) {
   return listAssignableStudents(models, actor, orgId);
 }
 
-export async function createAssessment(models, actor, orgId, body) {
+export async function createAssessment(models, actor, orgId, body, ip) {
   if (!canCreateAssessment(actor)) {
     const err = new Error('Missing permission: assessment_create');
     err.status = 403;
@@ -140,6 +141,17 @@ export async function createAssessment(models, actor, orgId, body) {
       acceptedAnswers: q.acceptedAnswers || [],
       caseSensitive: q.caseSensitive ?? false,
     })),
+  });
+
+  await logActivity({
+    models,
+    orgId: orgOid(orgId),
+    actorId: actor._id,
+    action: 'assessment.created',
+    resourceType: 'Assessment',
+    resourceId: doc._id,
+    metadata: { title: doc.title },
+    ip,
   });
 
   return serializeAssessment(doc.toObject());

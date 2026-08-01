@@ -14,7 +14,13 @@ import {
 } from './assessment.service.js';
 
 export const postAssessment = asyncHandler(async (req, res) => {
-  const assessment = await createAssessment(req.tenantModels, req.user, req.tenant.orgId, req.body);
+  const assessment = await createAssessment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.body,
+    req.ip
+  );
   res.status(201).json({ assessment });
 });
 

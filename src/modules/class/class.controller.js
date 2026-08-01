@@ -9,7 +9,7 @@ import {
 } from './class.service.js';
 
 export const getClasses = asyncHandler(async (req, res) => {
-  const result = await listClasses(req.tenantModels, req.user, req.tenant.orgId);
+  const result = await listClasses(req.tenantModels, req.user, req.tenant.orgId, req.query);
   res.json(result);
 });
 
@@ -19,7 +19,13 @@ export const getOneClass = asyncHandler(async (req, res) => {
 });
 
 export const postClass = asyncHandler(async (req, res) => {
-  const klass = await createClass(req.tenantModels, req.user, req.tenant.orgId, req.body);
+  const klass = await createClass(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.body,
+    req.ip
+  );
   res.status(201).json({ class: klass });
 });
 
@@ -29,13 +35,20 @@ export const patchClass = asyncHandler(async (req, res) => {
     req.user,
     req.tenant.orgId,
     req.params.id,
-    req.body
+    req.body,
+    req.ip
   );
   res.json({ class: klass });
 });
 
 export const removeClass = asyncHandler(async (req, res) => {
-  const result = await deleteClass(req.tenantModels, req.user, req.tenant.orgId, req.params.id);
+  const result = await deleteClass(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    req.ip
+  );
   res.json(result);
 });
 

@@ -14,6 +14,7 @@ export const createOrganizationSchema = z
       .max(63)
       .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, digits, and hyphens only'),
     isActive: z.boolean().optional(),
+    plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
     adminEmail: z.string().email().optional(),
     adminPassword: z.string().min(8).optional(),
     firstName: z.string().max(100).optional(),
@@ -35,10 +36,14 @@ export const patchOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     isActive: z.boolean().optional(),
+    plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
   })
-  .refine((data) => data.name !== undefined || data.isActive !== undefined, {
-    message: 'Provide at least one of name, isActive',
-  });
+  .refine(
+    (data) => data.name !== undefined || data.isActive !== undefined || data.plan !== undefined,
+    {
+      message: 'Provide at least one of name, isActive, plan',
+    }
+  );
 
 export const createPlatformUserSchema = z.object({
   email: z.string().email(),

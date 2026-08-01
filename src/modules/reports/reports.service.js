@@ -75,11 +75,39 @@ export async function dashboardForActor(models, actor, orgId) {
 }
 
 export async function activityFeed(models, orgId, { page = 1, limit = 30 }) {
-  const { ActivityLog } = models;
+  const { ActivityLog, User } = models;
   const skip = (page - 1) * limit;
   const [items, total] = await Promise.all([
     ActivityLog.find({ orgId }).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
     ActivityLog.countDocuments({ orgId }),
   ]);
-  return { items, total, page, limit };
+
+  const actorIds = [...new Set(items.map((i) => String(i.actorId)).filter(Boolean))];
+  const actors = actorIds.length
+    ? await User.find({ _id: { $in: actorIds } }).select('firstName lastName email').lean()
+    : [];
+  const actorMap = new Map(actors.map((u) => [String(u._id), u]));
+
+  return {
+    items: items.map((i) => {
+      const actor = actorMap.get(String(i.actorId));
+      const actorName = actor
+        ? [actor.firstName, actor.lastName].filter(Boolean).join(' ').trim() || actor.email
+        : null;
+      return {
+        id: String(i._id),
+        action: i.action,
+        resourceType: i.resourceType || null,
+        resourceId: i.resourceId ? String(i.resourceId) : null,
+        metadata: i.metadata || null,
+        ip: i.ip || null,
+        actorId: i.actorId ? String(i.actorId) : null,
+        actorLabel: actorName,
+        createdAt: i.createdAt,
+      };
+    }),
+    total,
+    page,
+    limit,
+  };
 }

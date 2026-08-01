@@ -20,6 +20,7 @@ export function serializeOrganization(o) {
     name: o.name,
     subdomain: o.subdomain,
     isActive: o.isActive,
+    plan: o.plan || 'ai_dashboard',
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
     settings: o.settings,
@@ -80,6 +81,7 @@ export async function createOrganizationWithOptionalAdmin(body) {
     name: body.name,
     subdomain: sub,
     isActive: body.isActive !== false,
+    plan: body.plan === 'ai_dashboard' ? 'ai_dashboard' : 'assessments_only',
   });
 
   const wantsAdmin = !!(body.adminEmail && body.adminPassword);
@@ -135,6 +137,7 @@ export async function patchOrganizationById(id, body) {
 
   if (body.name !== undefined) org.name = body.name;
   if (body.isActive !== undefined) org.isActive = body.isActive;
+  if (body.plan !== undefined) org.plan = body.plan;
   await org.save();
 
   return serializeOrganization(org.toObject());

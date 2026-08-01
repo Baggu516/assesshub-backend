@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { tenantMiddleware } from '../../middleware/tenant.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
 import { requireOrgAdmin } from '../../middleware/admin.middleware.js';
+import { requireAiPlan } from '../../middleware/plan.middleware.js';
 import { validateBody } from '../../middleware/validate.middleware.js';
 import { kbConfigPatchSchema } from './kb.schemas.js';
 import { kbUpload } from './kb.upload.js';
@@ -17,7 +18,7 @@ import {
 
 const r = Router();
 
-r.use(tenantMiddleware, requireAuth);
+r.use(tenantMiddleware, requireAuth, requireAiPlan);
 
 /** Metadata for embedding/chunking options (any authenticated user can read). */
 r.get('/meta', getKbMetaHandler);

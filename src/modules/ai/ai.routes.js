@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { tenantMiddleware } from '../../middleware/tenant.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
+import { requireAiPlan } from '../../middleware/plan.middleware.js';
 import { aiLimiter } from '../../middleware/rateLimit.middleware.js';
 import { validateBody } from '../../middleware/validate.middleware.js';
 import {
@@ -23,7 +24,7 @@ import {
 const r = Router();
 
 /** Same bar as dashboard: any active tenant user (workload context mirrors reports/dashboard). */
-r.use(tenantMiddleware, requireAuth, aiLimiter);
+r.use(tenantMiddleware, requireAuth, requireAiPlan, aiLimiter);
 
 r.get('/providers', getAiProviders);
 r.get('/knowledge-status', getAiKnowledgeStatus);
