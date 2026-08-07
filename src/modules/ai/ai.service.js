@@ -1,6 +1,14 @@
 import { dashboardForActor } from '../reports/reports.service.js';
+import {
+  ollamaBaseUrl,
+  ollamaChatModels,
+  ollamaConfigured,
+  resolveOllamaChatModel,
+} from './ollama.util.js';
 
 const FETCH_TIMEOUT_MS = 28_000;
+/** Local models can be slower on first load. */
+const OLLAMA_FETCH_TIMEOUT_MS = 120_000;
 
 function httpError(status, message) {
   const e = new Error(message);
@@ -9,16 +17,17 @@ function httpError(status, message) {
 }
 
 const DEFAULT_INTENTIONS = `- Help the user interpret their dashboard and assessment activity.
-- When organization knowledge base snippets are provided, use them for policies, study guides, and process questions for this tenant.
+- Organization knowledge base documents are school/org materials (handbooks, policies, curriculum, procedures). Prefer those snippets for school-related questions.
+- When knowledge base snippets are provided, answer from them first and cite the source title when possible.
 - Ground factual claims in dashboard data and/or knowledge base snippets—never invent facts.
 - Prefer short, scannable answers; add detail only when the user asks for it.
-- Use clear, professional language suitable for education.`;
+- Use clear, professional language suitable for schools and education.`;
 
 const DEFAULT_CONSTRAINTS = `- Do not invent assessments, scores, students, dates, counts, or document content not present in the sections below.
-- Knowledge base content is shared for the whole organization (tenant); do not claim it is private to one user.
+- Knowledge base content is shared for the whole school/organization (tenant); do not claim it is private to one user.
 - Do not imply you can see other tenants or organizations.
 - If the data is insufficient to answer, say what is missing instead of guessing.
-- Do not give legal, medical, or financial advice; stay within education and assessment context.
+- Do not give legal, medical, or financial advice; stay within education and school assessment context.
 - If the user asks you to change data in the app, explain they must do it in the UI—you only explain and suggest.`;
 
 export async function buildAiSystemPrompt(models, actor, orgId, options = {}) {
@@ -160,16 +169,71 @@ async function geminiChat(systemText, messages, apiKey) {
   return text.trim();
 }
 
+async function ollamaChat(systemText, messages, model) {
+  const openAIMessages = [
+    { role: 'system', content: systemText },
+    ...messages.map((m) => ({ role: m.role, content: m.content })),
+  ];
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), OLLAMA_FETCH_TIMEOUT_MS);
+
+  let res;
+  try {
+    res = await fetch(`${ollamaBaseUrl()}/api/chat`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: openAIMessages,
+        stream: false,
+        options: { temperature: 0.35, num_predict: 1024 },
+      }),
+    });
+  } finally {
+    clearTimeout(t);
+  }
+
+  const raw = await res.text();
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    throw httpError(502, 'Ollama returned a non-JSON response');
+  }
+
+  if (!res.ok) {
+    const msg = json?.error || json?.message || `Ollama error (${res.status})`;
+    throw httpError(502, typeof msg === 'string' ? msg : 'Ollama request failed');
+  }
+
+  const text = json?.message?.content;
+  if (!text || typeof text !== 'string') {
+    throw httpError(502, 'Ollama returned an empty reply');
+  }
+  return text.trim();
+}
+
 /**
- * @param {'gemini'|'groq'} provider
+ * @param {'gemini'|'groq'|'ollama'} provider
  * @param {string} systemText
  * @param {{ role: 'user'|'assistant', content: string }[]} messages
+ * @param {{ model?: string }} [options]
  */
-export async function runAiChat(provider, systemText, messages) {
+export async function runAiChat(provider, systemText, messages, options = {}) {
   if (provider === 'groq') {
     const key = process.env.GROQ_API_KEY?.trim();
     if (!key) throw httpError(503, 'Groq is not configured (missing GROQ_API_KEY)');
     return groqChat(systemText, messages, key);
+  }
+
+  if (provider === 'ollama') {
+    if (!ollamaConfigured()) {
+      throw httpError(503, 'Ollama is not configured (set OLLAMA_BASE_URL or OLLAMA_ENABLED=true)');
+    }
+    const model = resolveOllamaChatModel(options.model);
+    return ollamaChat(systemText, messages, model);
   }
 
   const key = process.env.GEMINI_API_KEY?.trim();
@@ -181,5 +245,7 @@ export function aiProviderAvailability() {
   return {
     gemini: Boolean(process.env.GEMINI_API_KEY?.trim()),
     groq: Boolean(process.env.GROQ_API_KEY?.trim()),
+    ollama: ollamaConfigured(),
+    ollamaModels: ollamaConfigured() ? ollamaChatModels() : [],
   };
 }

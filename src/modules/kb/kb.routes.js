@@ -11,6 +11,8 @@ import {
   getKbConfigHandler,
   patchKbConfigHandler,
   listKbDocumentsHandler,
+  listKbDocumentChunksHandler,
+  listKbQuestionsHandler,
   postKbDocumentHandler,
   deleteKbDocumentHandler,
   postKbReprocessHandler,
@@ -38,7 +40,9 @@ r.post('/documents', (req, res, next) => {
     return next();
   });
 }, postKbDocumentHandler);
+r.get('/documents/:id/chunks', listKbDocumentChunksHandler);
 r.delete('/documents/:id', deleteKbDocumentHandler);
 r.post('/documents/:id/reprocess', postKbReprocessHandler);
+r.get('/questions', listKbQuestionsHandler);
 
 export default r;

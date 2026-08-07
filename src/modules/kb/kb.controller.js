@@ -4,6 +4,8 @@ import {
   updateKbConfig,
   getKbMeta,
   listKbDocuments,
+  listKbDocumentChunks,
+  listKbQuestions,
   ingestKbDocument,
   deleteKbDocument,
   reprocessKbDocument,
@@ -26,6 +28,16 @@ export const patchKbConfigHandler = asyncHandler(async (req, res) => {
 export const listKbDocumentsHandler = asyncHandler(async (req, res) => {
   const documents = await listKbDocuments(req.tenantModels, req.tenant.orgId);
   res.json({ documents });
+});
+
+export const listKbDocumentChunksHandler = asyncHandler(async (req, res) => {
+  const chunks = await listKbDocumentChunks(req.tenantModels, req.tenant.orgId, req.params.id);
+  res.json({ chunks });
+});
+
+export const listKbQuestionsHandler = asyncHandler(async (req, res) => {
+  const questions = await listKbQuestions(req.tenantModels, req.tenant.orgId);
+  res.json({ questions });
 });
 
 export const postKbDocumentHandler = asyncHandler(async (req, res) => {

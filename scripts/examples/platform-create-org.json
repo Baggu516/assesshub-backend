@@ -1,9 +1,0 @@
-{
-  "name": "Acme Inc",
-  "subdomain": "acme",
-  "isActive": true,
-  "adminEmail": "admin@example.com",
-  "adminPassword": "ChangeThis!8",
-  "firstName": "Admin",
-  "lastName": "User"
-}

@@ -8,6 +8,7 @@ import {
   aiChatBodySchema,
   aiChatReplyBodySchema,
   aiChatPatchBodySchema,
+  aiChatFeedbackBodySchema,
 } from './ai.schemas.js';
 import {
   getAiProviders,
@@ -19,6 +20,7 @@ import {
   patchAiChatHandler,
   deleteAiChatHandler,
   postAiChatReplyHandler,
+  postAiChatFeedbackHandler,
 } from './ai.controller.js';
 
 const r = Router();
@@ -34,6 +36,7 @@ r.get('/chats/:id', getAiChatHandler);
 r.patch('/chats/:id', validateBody(aiChatPatchBodySchema), patchAiChatHandler);
 r.delete('/chats/:id', deleteAiChatHandler);
 r.post('/chats/:id/reply', validateBody(aiChatReplyBodySchema), postAiChatReplyHandler);
+r.post('/chats/:id/feedback', validateBody(aiChatFeedbackBodySchema), postAiChatFeedbackHandler);
 r.post('/chat', validateBody(aiChatBodySchema), postAiChat);
 
 export default r;

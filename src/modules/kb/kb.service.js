@@ -10,20 +10,22 @@ import {
   embeddingProviderConfigured,
   resolveEmbeddingModel,
 } from './kb.embed.js';
-import { EMBEDDING_PROVIDERS } from '../../models/KnowledgeBaseConfig.js';
 import { EMBEDDING_MODEL_OPTIONS, DEFAULT_EMBEDDING_MODEL } from './kb.constants.js';
 import {
   DEFAULT_CHUNKING,
   normalizeChunkingConfig,
   resolveChunkingParams,
   serializeChunkingSettings,
+  toPersistedChunkingFields,
 } from './kb.config.util.js';
 import { projectUploadsPath } from '../../utils/writableDir.js';
+import { s3Configured, uploadFileToS3, deleteS3Object, isS3StoragePath } from '../../utils/s3.js';
 import {
   enrichmentAvailable,
   generateDocumentSummary,
   generateSyntheticQuestions,
 } from './kb.enrich.js';
+import { ollamaConfigured } from '../ai/ollama.util.js';
 
 export const KB_UPLOAD_ROOT = projectUploadsPath('kb');
 
@@ -61,12 +63,9 @@ export async function getOrCreateKbConfig(models, orgId) {
   if (!doc) {
     doc = await KnowledgeBaseConfig.create({
       orgId: oid,
-      ...DEFAULT_CHUNKING,
-      chunkingStrategy: 'semantic',
-      chunkSize: 500,
-      chunkOverlap: 50,
-      embeddingProvider: 'gemini',
-      embeddingModel: DEFAULT_EMBEDDING_MODEL.gemini,
+      ...toPersistedChunkingFields(DEFAULT_CHUNKING),
+      embeddingProvider: 'ollama',
+      embeddingModel: DEFAULT_EMBEDDING_MODEL.ollama,
     });
   }
   return serializeConfig(doc);
@@ -76,14 +75,54 @@ export async function updateKbConfig(models, orgId, patch) {
   const { KnowledgeBaseConfig } = models;
   const oid = orgOid(orgId);
   const existing = await KnowledgeBaseConfig.findOne({ orgId: oid }).lean();
-  const merged = normalizeChunkingConfig({ ...existing, ...patch });
-  const { strategy, chunkSize, chunkOverlap } = resolveChunkingParams(merged);
+
+  // Keep token aliases in sync so normalize doesn't prefer stale legacy fields.
+  const incoming = { ...patch };
+  if (patch.chunkSize != null) {
+    incoming.chunkSize = patch.chunkSize;
+    incoming.targetTokens = patch.chunkSize;
+  } else if (patch.targetTokens != null) {
+    incoming.chunkSize = patch.targetTokens;
+    incoming.targetTokens = patch.targetTokens;
+  }
+  if (patch.chunkOverlap != null) {
+    incoming.chunkOverlap = patch.chunkOverlap;
+    incoming.overlapTokens = patch.chunkOverlap;
+  } else if (patch.overlapTokens != null) {
+    incoming.chunkOverlap = patch.overlapTokens;
+    incoming.overlapTokens = patch.overlapTokens;
+  }
+  if (patch.chunkingStrategy === 'original') {
+    incoming.sourceOnlyMode = true;
+    incoming.semanticSplitting = false;
+    incoming.autoSummary = false;
+    incoming.syntheticQuestions = false;
+  } else if (patch.chunkingStrategy === 'semantic') {
+    incoming.sourceOnlyMode = false;
+    incoming.semanticSplitting = true;
+  } else if (patch.sourceOnlyMode === true) {
+    incoming.chunkingStrategy = 'original';
+    incoming.semanticSplitting = false;
+    incoming.autoSummary = false;
+    incoming.syntheticQuestions = false;
+  } else if (patch.semanticSplitting === true && patch.sourceOnlyMode !== true) {
+    incoming.chunkingStrategy = 'semantic';
+    incoming.sourceOnlyMode = false;
+  } else if (patch.semanticSplitting === false) {
+    incoming.chunkingStrategy = 'original';
+    incoming.autoSummary = false;
+    incoming.syntheticQuestions = false;
+  }
+
+  const merged = normalizeChunkingConfig({ ...existing, ...incoming });
+  // Original / source-only never runs AI ingestion enhancements.
+  if (merged.chunkingStrategy === 'original') {
+    merged.autoSummary = false;
+    merged.syntheticQuestions = false;
+  }
   const set = {
-    ...patch,
-    ...serializeChunkingSettings(merged),
-    chunkingStrategy: strategy,
-    chunkSize,
-    chunkOverlap,
+    ...incoming,
+    ...toPersistedChunkingFields(merged),
   };
   const doc = await KnowledgeBaseConfig.findOneAndUpdate(
     { orgId: oid },
@@ -97,11 +136,13 @@ export function getKbMeta() {
   return {
     chunkingDefaults: DEFAULT_CHUNKING,
     enrichmentAvailable: enrichmentAvailable(),
-    embeddingProviders: EMBEDDING_PROVIDERS,
-    embeddingModels: EMBEDDING_MODEL_OPTIONS,
-    providersAvailable: Object.fromEntries(
-      EMBEDDING_PROVIDERS.map((p) => [p, embeddingProviderConfigured(p)])
-    ),
+    embeddingProviders: ['ollama'],
+    embeddingModels: {
+      ollama: EMBEDDING_MODEL_OPTIONS.ollama,
+    },
+    providersAvailable: {
+      ollama: embeddingProviderConfigured('ollama'),
+    },
   };
 }
 
@@ -131,29 +172,116 @@ export async function listKbDocuments(models, orgId) {
   return rows.map(serializeDocument);
 }
 
-async function processDocument(models, orgId, documentId) {
+export async function listKbDocumentChunks(models, orgId, documentId) {
+  const { KnowledgeDocument, KnowledgeChunk } = models;
+  const oid = orgOid(orgId);
+  const doc = await KnowledgeDocument.findOne({ _id: documentId, orgId: oid }).lean();
+  if (!doc) throw httpError(404, 'Document not found');
+
+  const rows = await KnowledgeChunk.find({ orgId: oid, documentId: doc._id })
+    .select('chunkIndex chunkKind text createdAt')
+    .sort({ chunkIndex: 1 })
+    .lean();
+
+  return rows.map((c) => ({
+    id: String(c._id),
+    chunkIndex: c.chunkIndex,
+    chunkKind: c.chunkKind || 'content',
+    text: c.text,
+    createdAt: c.createdAt,
+  }));
+}
+
+/** Org-wide AI questions with whether RAG snippets were used for that turn. */
+export async function listKbQuestions(models, orgId) {
+  const { AiChatSession, User } = models;
+  const oid = orgOid(orgId);
+
+  const sessions = await AiChatSession.find({ orgId: oid })
+    .select('userId messages updatedAt')
+    .sort({ updatedAt: -1 })
+    .limit(150)
+    .lean();
+
+  const userIds = [...new Set(sessions.map((s) => String(s.userId)))];
+  const users = await User.find({ _id: { $in: userIds } })
+    .select('firstName lastName email')
+    .lean();
+  const userById = new Map(users.map((u) => [String(u._id), u]));
+
+  const questions = [];
+  for (const session of sessions) {
+    const user = userById.get(String(session.userId));
+    const name =
+      [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+      user?.email ||
+      'Unknown';
+    const messages = session.messages || [];
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role !== 'user') continue;
+      const assistant = messages[i + 1]?.role === 'assistant' ? messages[i + 1] : null;
+      const sources = Array.isArray(m.knowledgeSources)
+        ? m.knowledgeSources.map((s) => ({
+            documentId: String(s.documentId),
+            title: s.title || '',
+          }))
+        : [];
+      questions.push({
+        id: `${String(session._id)}-${i}`,
+        chatId: String(session._id),
+        messageIndex: i,
+        name,
+        email: user?.email || '',
+        question: m.content,
+        rag: Boolean(m.knowledgeBaseUsed),
+        sources,
+        feedback: assistant?.feedback === 'up' || assistant?.feedback === 'down' ? assistant.feedback : null,
+        feedbackAt: assistant?.feedbackAt || null,
+        askedAt: m.askedAt || session.updatedAt,
+      });
+    }
+  }
+
+  questions.sort((a, b) => new Date(b.askedAt).getTime() - new Date(a.askedAt).getTime());
+  return questions.slice(0, 200);
+}
+
+export async function processDocument(models, orgId, documentId) {
   const { KnowledgeDocument, KnowledgeChunk, KnowledgeBaseConfig } = models;
   const oid = orgOid(orgId);
   const doc = await KnowledgeDocument.findOne({ _id: documentId, orgId: oid });
   if (!doc) return;
 
-  const config =
-    (await KnowledgeBaseConfig.findOne({ orgId: oid }).lean()) ||
-    ({
-      ...DEFAULT_CHUNKING,
-      embeddingProvider: 'gemini',
-      embeddingModel: DEFAULT_EMBEDDING_MODEL.gemini,
-    });
-  const chunking = normalizeChunkingConfig(config);
+  const savedConfig = (await KnowledgeBaseConfig.findOne({ orgId: oid }).lean()) || {
+    ...DEFAULT_CHUNKING,
+  };
+  const embeddingConfig = await getEmbeddingConfigForOrg(models, orgId);
+  const chunking = normalizeChunkingConfig(savedConfig);
 
-  if (
-    !EMBEDDING_PROVIDERS.includes(config.embeddingProvider) ||
-    !embeddingProviderConfigured(config.embeddingProvider)
-  ) {
+  if (!embeddingConfig) {
     doc.status = 'failed';
-    doc.errorMessage = `Embedding provider "${config.embeddingProvider}" is not supported or not configured on the server`;
+    doc.errorMessage =
+      'Ollama is not configured. Set OLLAMA_ENABLED=true (or OLLAMA_BASE_URL) and pull nomic-embed-text.';
     await doc.save();
     return;
+  }
+
+  // Heal stale configs (e.g. gemini/huggingface saved before Ollama-only).
+  if (
+    savedConfig.embeddingProvider !== embeddingConfig.embeddingProvider ||
+    savedConfig.embeddingModel !== embeddingConfig.embeddingModel
+  ) {
+    await KnowledgeBaseConfig.findOneAndUpdate(
+      { orgId: oid },
+      {
+        $set: {
+          embeddingProvider: embeddingConfig.embeddingProvider,
+          embeddingModel: embeddingConfig.embeddingModel,
+        },
+      },
+      { upsert: true }
+    );
   }
 
   try {
@@ -161,44 +289,37 @@ async function processDocument(models, orgId, documentId) {
     doc.errorMessage = '';
     await doc.save();
 
+    console.log(`[kb] extract start doc=${doc._id}`);
     const text = await extractTextFromFile(doc.storagePath, doc.fileType);
     if (!text || text.length < 10) {
       throw new Error('No extractable text found in file');
     }
+    console.log(`[kb] extract done chars=${text.length}`);
 
-    const { strategy, chunkSize, chunkOverlap } = resolveChunkingParams(config);
+    const { strategy, chunkSize, chunkOverlap } = resolveChunkingParams(savedConfig);
     const contentChunks = chunkText(text, strategy, chunkSize, chunkOverlap);
 
     if (!contentChunks.length) {
       throw new Error('Chunking produced no segments');
     }
+    console.log(`[kb] chunked segments=${contentChunks.length} strategy=${strategy}`);
 
     await KnowledgeChunk.deleteMany({ orgId: oid, documentId: doc._id });
 
+    // Embed content first so docs become searchable even if enrichment is slow/unavailable.
     const segments = contentChunks.map((t) => ({ text: t, chunkKind: 'content' }));
 
-    const canEnrich = enrichmentAvailable() && !chunking.sourceOnlyMode;
-    if (canEnrich && chunking.autoSummary) {
-      const summary = await generateDocumentSummary(text, doc.originalName);
-      if (summary) {
-        segments.unshift({ text: `[Document summary] ${summary}`, chunkKind: 'summary' });
-      }
-    }
-    if (canEnrich && chunking.syntheticQuestions) {
-      const questions = await generateSyntheticQuestions(text, doc.originalName);
-      for (const q of questions) {
-        segments.push({ text: q, chunkKind: 'synthetic_question' });
-      }
-    }
+    const provider = embeddingConfig.embeddingProvider;
+    const model = resolveEmbeddingModel(provider, embeddingConfig.embeddingModel);
+    console.log(`[kb] embed start provider=${provider} model=${model}`);
 
-    const model = resolveEmbeddingModel(config.embeddingProvider, config.embeddingModel);
     const batchSize = 8;
     const chunkDocs = [];
 
     for (let i = 0; i < segments.length; i += batchSize) {
       const batch = segments.slice(i, i + batchSize);
       const texts = batch.map((s) => s.text);
-      const vectors = await embedTexts(config.embeddingProvider, model, texts);
+      const vectors = await embedTexts(provider, model, texts);
       for (let j = 0; j < batch.length; j++) {
         chunkDocs.push({
           orgId: oid,
@@ -209,16 +330,75 @@ async function processDocument(models, orgId, documentId) {
           embedding: vectors[j],
         });
       }
+      console.log(`[kb] embed progress ${Math.min(i + batch.length, segments.length)}/${segments.length}`);
     }
+
+    // Optional enrichment after content embeddings (soft-fail; never blocks forever).
+    const canEnrich =
+      enrichmentAvailable() && chunking.chunkingStrategy !== 'original';
+    const ENRICH_MS = 45_000;
+    if (canEnrich && chunking.autoSummary) {
+      try {
+        console.log('[kb] summary start');
+        const summary = await Promise.race([
+          generateDocumentSummary(text, doc.originalName),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('summary timeout')), ENRICH_MS)),
+        ]);
+        if (summary) {
+          const vector = (await embedTexts(provider, model, [summary]))[0];
+          chunkDocs.unshift({
+            orgId: oid,
+            documentId: doc._id,
+            chunkIndex: -1,
+            chunkKind: 'summary',
+            text: `[Document summary] ${summary}`,
+            embedding: vector,
+          });
+        }
+      } catch (e) {
+        console.warn('[kb] summary skipped:', e.message || e);
+      }
+    }
+    if (canEnrich && chunking.syntheticQuestions) {
+      try {
+        console.log('[kb] synthetic questions start');
+        const questions = await Promise.race([
+          generateSyntheticQuestions(text, doc.originalName),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('synthetic questions timeout')), ENRICH_MS)
+          ),
+        ]);
+        for (const q of questions) {
+          const vector = (await embedTexts(provider, model, [q]))[0];
+          chunkDocs.push({
+            orgId: oid,
+            documentId: doc._id,
+            chunkIndex: chunkDocs.length,
+            chunkKind: 'synthetic_question',
+            text: q,
+            embedding: vector,
+          });
+        }
+      } catch (e) {
+        console.warn('[kb] synthetic questions skipped:', e.message || e);
+      }
+    }
+
+    // Normalize chunkIndex to 0..n-1 after optional prepends.
+    chunkDocs.forEach((c, idx) => {
+      c.chunkIndex = idx;
+    });
 
     await KnowledgeChunk.insertMany(chunkDocs);
 
     doc.status = 'ready';
     doc.extractedCharCount = text.length;
-    doc.chunkCount = segments.length;
+    doc.chunkCount = chunkDocs.length;
     doc.errorMessage = '';
     await doc.save();
+    console.log(`[kb] ready doc=${doc._id} chunks=${chunkDocs.length}`);
   } catch (err) {
+    console.error(`[kb] failed doc=${doc._id}:`, err.message || err);
     doc.status = 'failed';
     doc.errorMessage = err.message || 'Processing failed';
     await doc.save();
@@ -238,14 +418,22 @@ export async function ingestKbDocument(models, orgId, userId, file) {
     throw httpError(400, 'Maximum 50 knowledge-base documents per organization');
   }
 
-  const uploadDir = await ensureKbUploadDir(orgId);
   const docId = new mongoose.Types.ObjectId();
   const ext = path.extname(file.originalname) || `.${fileType}`;
-  const dest = path.join(uploadDir, `${String(docId)}${ext}`);
+  const objectKey = `kb/${String(orgId)}/${String(docId)}${ext}`;
 
+  let storagePath;
   try {
-    await fs.rename(file.path, dest);
+    if (s3Configured()) {
+      storagePath = await uploadFileToS3(file.path, objectKey, file.mimetype || undefined);
+      await fs.unlink(file.path).catch(() => {});
+    } else {
+      const uploadDir = await ensureKbUploadDir(orgId);
+      storagePath = path.join(uploadDir, `${String(docId)}${ext}`);
+      await fs.rename(file.path, storagePath);
+    }
   } catch (err) {
+    await fs.unlink(file.path).catch(() => {});
     throw httpError(500, err.message || 'Failed to store uploaded file');
   }
 
@@ -258,12 +446,16 @@ export async function ingestKbDocument(models, orgId, userId, file) {
       originalName: file.originalname,
       mimeType: file.mimetype || '',
       fileType,
-      storagePath: dest,
+      storagePath,
       fileSize: file.size,
       status: 'pending',
     });
   } catch (err) {
-    await fs.unlink(dest).catch(() => {});
+    if (isS3StoragePath(storagePath)) {
+      await deleteS3Object(storagePath).catch(() => {});
+    } else {
+      await fs.unlink(storagePath).catch(() => {});
+    }
     throw err;
   }
 
@@ -282,7 +474,11 @@ export async function deleteKbDocument(models, orgId, documentId) {
 
   await KnowledgeChunk.deleteMany({ orgId: oid, documentId: doc._id });
   try {
-    await fs.unlink(doc.storagePath);
+    if (isS3StoragePath(doc.storagePath)) {
+      await deleteS3Object(doc.storagePath);
+    } else {
+      await fs.unlink(doc.storagePath);
+    }
   } catch {
     /* file may already be gone */
   }
@@ -315,18 +511,14 @@ async function getEmbeddingConfigForOrg(models, orgId) {
   const { KnowledgeBaseConfig } = models;
   const oid = orgOid(orgId);
   const saved = await KnowledgeBaseConfig.findOne({ orgId: oid }).lean();
-  if (
-    saved?.embeddingProvider &&
-    EMBEDDING_PROVIDERS.includes(saved.embeddingProvider) &&
-    embeddingProviderConfigured(saved.embeddingProvider)
-  ) {
-    return saved;
-  }
-  const fallback = EMBEDDING_PROVIDERS.find((p) => embeddingProviderConfigured(p));
-  if (!fallback) return null;
+  if (!ollamaConfigured()) return null;
+  const model =
+    saved?.embeddingProvider === 'ollama' && saved?.embeddingModel
+      ? saved.embeddingModel
+      : DEFAULT_EMBEDDING_MODEL.ollama;
   return {
-    embeddingProvider: fallback,
-    embeddingModel: DEFAULT_EMBEDDING_MODEL[fallback],
+    embeddingProvider: 'ollama',
+    embeddingModel: model,
   };
 }
 
@@ -350,21 +542,22 @@ export async function getKnowledgeBaseStatus(models, orgId) {
 /**
  * Retrieve relevant KB snippets for AI chat.
  * Scoped by orgId only — every user in the tenant shares the same org knowledge base.
+ * @returns {{ context: string, sources: { documentId: string, title: string, score: number }[] }}
  */
 export async function retrieveKnowledgeContext(models, orgId, query) {
   const { KnowledgeChunk, KnowledgeDocument } = models;
   const trimmed = (query || '').trim();
-  if (!trimmed) return '';
+  if (!trimmed) return { context: '', sources: [] };
 
   const oid = orgOid(orgId);
   const config = await getEmbeddingConfigForOrg(models, orgId);
-  if (!config) return '';
+  if (!config) return { context: '', sources: [] };
 
   const chunkCount = await KnowledgeChunk.countDocuments({
     orgId: oid,
     'embedding.0': { $exists: true },
   });
-  if (!chunkCount) return '';
+  if (!chunkCount) return { context: '', sources: [] };
 
   const provider = config.embeddingProvider;
   const model = resolveEmbeddingModel(provider, config.embeddingModel);
@@ -372,7 +565,7 @@ export async function retrieveKnowledgeContext(models, orgId, query) {
   try {
     queryVec = await embedText(provider, model, trimmed);
   } catch {
-    return '';
+    return { context: '', sources: [] };
   }
 
   const chunks = await KnowledgeChunk.find({ orgId: oid, 'embedding.0': { $exists: true } })
@@ -429,11 +622,24 @@ export async function retrieveKnowledgeContext(models, orgId, query) {
     }
   }
 
-  if (!scored.length || scored[0].score < MIN_RELEVANCE) return '';
+  if (!scored.length || scored[0].score < MIN_RELEVANCE) {
+    return { context: '', sources: [] };
+  }
 
   const lines = scored.map(
     (s, i) =>
       `[${i + 1}] source: ${s.docTitle} (chunk ${s.chunkIndex}, relevance ${s.score.toFixed(2)})\n${s.text}`
   );
-  return lines.join('\n\n');
+
+  const sourceMap = new Map();
+  for (const s of scored) {
+    if (!sourceMap.has(s.documentId)) {
+      sourceMap.set(s.documentId, { documentId: s.documentId, title: s.docTitle, score: s.score });
+    }
+  }
+
+  return {
+    context: lines.join('\n\n'),
+    sources: [...sourceMap.values()],
+  };
 }

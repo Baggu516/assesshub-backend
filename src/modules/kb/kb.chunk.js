@@ -75,41 +75,101 @@ export function chunkRecursive(text, chunkSize, overlap) {
 
 /**
  * Semantic-ish chunking: sentence boundaries, then greedy merge by length.
- * (Full embedding-based merge runs in kb.service when strategy is semantic.)
+ * Oversized sentences fall back to fixed windows with overlap.
+ * When a merge flush occurs, the next chunk starts with `overlap` words from the prior chunk.
  */
-export function chunkSemanticBySentences(text, chunkSize) {
+export function chunkSemanticBySentences(text, chunkSize, overlap = 0) {
   const sentences = text
     .split(/(?<=[.!?])\s+|\n+/)
     .map((s) => s.trim())
     .filter(Boolean);
   if (!sentences.length) return [];
 
+  const ov = Math.max(0, Math.min(overlap, Math.floor(chunkSize / 2)));
   const chunks = [];
   let buf = [];
   let count = 0;
 
+  const flush = () => {
+    if (!buf.length) return;
+    const piece = buf.join(' ');
+    chunks.push(piece);
+    if (ov > 0) {
+      const tail = tokenizeWords(piece).slice(-ov);
+      buf = tail.length ? [wordsToText(tail)] : [];
+      count = tail.length;
+    } else {
+      buf = [];
+      count = 0;
+    }
+  };
+
   for (const sentence of sentences) {
     const w = tokenizeWords(sentence).length;
+    if (w > chunkSize) {
+      flush();
+      chunks.push(...chunkFixed(sentence, chunkSize, ov));
+      if (ov > 0 && chunks.length) {
+        const tail = tokenizeWords(chunks[chunks.length - 1]).slice(-ov);
+        buf = tail.length ? [wordsToText(tail)] : [];
+        count = tail.length;
+      }
+      continue;
+    }
     if (count + w > chunkSize && buf.length) {
-      chunks.push(buf.join(' '));
-      buf = [sentence];
-      count = w;
+      flush();
+      // After flush, buf may hold overlap; append sentence if it still fits
+      if (count + w > chunkSize && buf.length) {
+        chunks.push(buf.join(' '));
+        buf = [sentence];
+        count = w;
+      } else {
+        buf.push(sentence);
+        count += w;
+      }
     } else {
       buf.push(sentence);
       count += w;
     }
   }
-  if (buf.length) chunks.push(buf.join(' '));
+  if (buf.length) {
+    const piece = buf.join(' ');
+    // Avoid emitting a tiny overlap-only remnant as a final chunk when empty of new content
+    if (chunks.length && tokenizeWords(piece).length <= ov) {
+      // merge remnant into previous
+      chunks[chunks.length - 1] = `${chunks[chunks.length - 1]} ${piece}`.trim();
+    } else {
+      chunks.push(piece);
+    }
+  }
   return chunks;
 }
 
-/** Original paragraphs as-is (no overlap stitching). */
-export function chunkSourceOnly(text) {
+/**
+ * Original / source-only chunking: preserve paragraphs; apply fixed-size windows
+ * (with overlap) when a paragraph exceeds the chunk size budget.
+ */
+export function chunkSourceOnly(text, chunkSize = 500, overlap = 0) {
   const normalized = text.replace(/\r\n/g, '\n').trim();
   if (!normalized) return [];
-  const paras = normalized.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-  if (paras.length) return paras;
-  return normalized.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  let paras = normalized.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+  if (!paras.length) {
+    paras = normalized.split(/\n+/).map((p) => p.trim()).filter(Boolean);
+  }
+
+  const size = Math.max(100, chunkSize);
+  const ov = Math.max(0, Math.min(overlap, Math.floor(size / 2)));
+  const out = [];
+
+  for (const p of paras) {
+    if (tokenizeWords(p).length <= size) {
+      out.push(p);
+    } else {
+      out.push(...chunkFixed(p, size, ov));
+    }
+  }
+
+  return out;
 }
 
 /** Approximate words from token budget (~0.75 words per token). */
@@ -123,11 +183,12 @@ export function chunkText(text, strategy, chunkSize, overlap) {
 
   switch (strategy) {
     case 'source':
-      return chunkSourceOnly(text);
+    case 'original':
+      return chunkSourceOnly(text, size, ov);
     case 'fixed':
       return chunkFixed(text, size, ov);
     case 'semantic':
-      return chunkSemanticBySentences(text, size);
+      return chunkSemanticBySentences(text, size, ov);
     case 'recursive':
     default:
       return chunkRecursive(text, size, ov);

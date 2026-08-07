@@ -1,7 +1,11 @@
 import mongoose from 'mongoose';
 import { buildAiSystemPrompt, runAiChat } from './ai.service.js';
 import { decideChatIntent, shouldRefreshKnowledgeCache } from './ai.intent.js';
-import { retrieveKnowledgeContext, getKnowledgeBaseStatus } from '../kb/kb.service.js';
+import {
+  retrieveKnowledgeContext,
+  getKnowledgeBaseStatus,
+  reprocessKbDocument,
+} from '../kb/kb.service.js';
 
 const MAX_CHATS_PER_USER = 50;
 const MAX_MESSAGES_PER_CHAT = 40;
@@ -18,8 +22,28 @@ function titleFromContent(content) {
   return t.length <= 80 ? t : `${t.slice(0, 77)}…`;
 }
 
+function serializeSources(sources) {
+  if (!Array.isArray(sources) || !sources.length) return [];
+  return sources.map((s) => ({
+    documentId: String(s.documentId),
+    title: s.title || '',
+  }));
+}
+
 function serializeMessage(m) {
-  return { role: m.role, content: m.content };
+  const out = { role: m.role, content: m.content };
+  if (m.role === 'user' && typeof m.knowledgeBaseUsed === 'boolean') {
+    out.knowledgeBaseUsed = m.knowledgeBaseUsed;
+  }
+  if (m.role === 'user' && Array.isArray(m.knowledgeSources) && m.knowledgeSources.length) {
+    out.knowledgeSources = serializeSources(m.knowledgeSources);
+  }
+  if (m.askedAt) out.askedAt = m.askedAt;
+  if (m.role === 'assistant' && (m.feedback === 'up' || m.feedback === 'down')) {
+    out.feedback = m.feedback;
+    if (m.feedbackAt) out.feedbackAt = m.feedbackAt;
+  }
+  return out;
 }
 
 function serializeChat(doc) {
@@ -154,7 +178,7 @@ function trimStoredMessages(messages, max) {
 /**
  * Append user message, call model, append assistant; persist.
  */
-export async function replyInAiChat(models, actor, orgId, chatId, provider, content) {
+export async function replyInAiChat(models, actor, orgId, chatId, provider, content, options = {}) {
   const { AiChatSession } = models;
   if (!mongoose.Types.ObjectId.isValid(chatId)) {
     throw httpError(400, 'Invalid chat id');
@@ -167,12 +191,28 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
     throw httpError(404, 'Chat not found');
   }
 
-  let history = (doc.messages || []).map((m) => ({ role: m.role, content: m.content }));
+  let history = (doc.messages || []).map((m) => ({
+    role: m.role,
+    content: m.content,
+    ...(m.role === 'user'
+      ? {
+          knowledgeBaseUsed: Boolean(m.knowledgeBaseUsed),
+          knowledgeSources: serializeSources(m.knowledgeSources),
+          ...(m.askedAt ? { askedAt: m.askedAt } : {}),
+        }
+      : {
+          ...(m.feedback === 'up' || m.feedback === 'down' ? { feedback: m.feedback } : {}),
+          ...(m.feedbackAt ? { feedbackAt: m.feedbackAt } : {}),
+        }),
+  }));
   while (history.length > 0 && history[0].role === 'assistant') {
     history.shift();
   }
 
-  const forModel = [...history, { role: 'user', content }];
+  const forModel = [
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content },
+  ];
 
   if (forModel.length === 0 || forModel[0].role !== 'user' || forModel[forModel.length - 1].role !== 'user') {
     throw httpError(400, 'Invalid message thread state');
@@ -182,6 +222,7 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
   const routing = decideChatIntent(content, history, kbStatus.available);
 
   let knowledgeContext = '';
+  let knowledgeSources = [];
   let knowledgeRefreshed = false;
 
   if (routing.useKnowledgeBase) {
@@ -191,22 +232,32 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
       routing.reason
     );
     if (refresh) {
-      knowledgeContext = await retrieveKnowledgeContext(models, orgId, content);
+      const retrieved = await retrieveKnowledgeContext(models, orgId, content);
+      knowledgeContext = retrieved.context || '';
+      knowledgeSources = serializeSources(retrieved.sources);
       doc.cachedKnowledgeQuery = content;
-      doc.cachedKnowledgeContext = knowledgeContext || '';
-      knowledgeRefreshed = Boolean(knowledgeContext?.trim());
+      doc.cachedKnowledgeContext = knowledgeContext;
+      doc.cachedKnowledgeSources = knowledgeSources;
+      knowledgeRefreshed = Boolean(knowledgeContext.trim());
     } else if (doc.cachedKnowledgeContext?.trim()) {
       knowledgeContext = doc.cachedKnowledgeContext;
+      knowledgeSources = serializeSources(doc.cachedKnowledgeSources);
     } else {
-      knowledgeContext = await retrieveKnowledgeContext(models, orgId, content);
+      const retrieved = await retrieveKnowledgeContext(models, orgId, content);
+      knowledgeContext = retrieved.context || '';
+      knowledgeSources = serializeSources(retrieved.sources);
       doc.cachedKnowledgeQuery = content;
-      doc.cachedKnowledgeContext = knowledgeContext || '';
-      knowledgeRefreshed = Boolean(knowledgeContext?.trim());
+      doc.cachedKnowledgeContext = knowledgeContext;
+      doc.cachedKnowledgeSources = knowledgeSources;
+      knowledgeRefreshed = Boolean(knowledgeContext.trim());
     }
   } else {
     doc.cachedKnowledgeQuery = '';
     doc.cachedKnowledgeContext = '';
+    doc.cachedKnowledgeSources = [];
   }
+
+  const knowledgeBaseUsed = Boolean(knowledgeContext?.trim());
 
   const intentLabel = {
     general: 'General help; use workload only.',
@@ -220,9 +271,21 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
     includeWorkload: routing.useWorkload,
     chatIntent: intentLabel,
   });
-  const assistantContent = await runAiChat(provider, systemText, forModel);
+  const assistantContent = await runAiChat(provider, systemText, forModel, {
+    model: options.model,
+  });
 
-  const combined = [...history, { role: 'user', content }, { role: 'assistant', content: assistantContent }];
+  const combined = [
+    ...history,
+    {
+      role: 'user',
+      content,
+      knowledgeBaseUsed,
+      knowledgeSources: knowledgeBaseUsed ? knowledgeSources : [],
+      askedAt: new Date(),
+    },
+    { role: 'assistant', content: assistantContent },
+  ];
   const trimmed = trimStoredMessages(combined, MAX_MESSAGES_PER_CHAT);
 
   doc.messages.length = 0;
@@ -239,8 +302,67 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
   return {
     message: { role: 'assistant', content: assistantContent },
     chat: serializeChat(doc.toObject()),
-    knowledgeBaseUsed: Boolean(knowledgeContext?.trim()),
+    knowledgeBaseUsed,
+    knowledgeSources: knowledgeBaseUsed ? knowledgeSources : [],
     chatIntent: routing.intent,
     knowledgeRefreshed,
+  };
+}
+
+/**
+ * Thumbs up/down on an assistant message.
+ * Thumbs down + RAG sources → re-chunk those knowledge documents.
+ */
+export async function setAiChatMessageFeedback(models, userId, orgId, chatId, messageIndex, rating) {
+  const { AiChatSession } = models;
+  if (!mongoose.Types.ObjectId.isValid(chatId)) {
+    throw httpError(400, 'Invalid chat id');
+  }
+  if (rating !== 'up' && rating !== 'down') {
+    throw httpError(400, 'rating must be up or down');
+  }
+  const idx = Number(messageIndex);
+  if (!Number.isInteger(idx) || idx < 0) {
+    throw httpError(400, 'Invalid message index');
+  }
+
+  const orgOid = new mongoose.Types.ObjectId(String(orgId));
+  const uid = new mongoose.Types.ObjectId(String(userId));
+  const doc = await AiChatSession.findOne({ _id: chatId, orgId: orgOid, userId: uid });
+  if (!doc) throw httpError(404, 'Chat not found');
+
+  if (!doc.messages?.[idx] || doc.messages[idx].role !== 'assistant') {
+    throw httpError(400, 'Feedback only applies to assistant messages');
+  }
+
+  doc.messages[idx].feedback = rating;
+  doc.messages[idx].feedbackAt = new Date();
+  await doc.save();
+
+  let reprocessed = [];
+  if (rating === 'down') {
+    // Prefer sources from the preceding user turn.
+    let sources = [];
+    for (let i = idx - 1; i >= 0; i--) {
+      if (doc.messages[i].role === 'user') {
+        sources = serializeSources(doc.messages[i].knowledgeSources);
+        break;
+      }
+    }
+    const uniqueIds = [...new Set(sources.map((s) => s.documentId).filter(Boolean))];
+    for (const documentId of uniqueIds) {
+      try {
+        const d = await reprocessKbDocument(models, orgId, documentId);
+        reprocessed.push({ documentId, originalName: d.originalName, status: d.status });
+      } catch (e) {
+        console.warn('[kb] reprocess after feedback failed', documentId, e.message || e);
+      }
+    }
+  }
+
+  return {
+    chat: serializeChat(doc.toObject()),
+    feedback: rating,
+    reprocessed,
   };
 }

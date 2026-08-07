@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import mongoose from 'mongoose';
 import authRoutes from '../modules/auth/auth.routes.js';
 import userRoutes from '../modules/user/user.routes.js';
 import permissionRoutes from '../modules/permission/permission.routes.js';
@@ -17,8 +18,35 @@ import promotionRoutes from '../modules/promotion/promotion.routes.js';
 
 const r = Router();
 
-r.get('/health', (_req, res) => {
-  res.json({ ok: true, service: 'assesshub-api' });
+const READY_STATES = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+
+r.get('/health', async (_req, res) => {
+  const readyState = mongoose.connection.readyState;
+  const dbConnected = readyState === 1;
+  let pingOk = false;
+  let dbName = null;
+
+  if (dbConnected) {
+    try {
+      await mongoose.connection.db.admin().ping();
+      pingOk = true;
+      dbName = mongoose.connection.db.databaseName;
+    } catch {
+      pingOk = false;
+    }
+  }
+
+  const ok = dbConnected && pingOk;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    service: 'assesshub-api',
+    mongodb: {
+      connected: dbConnected,
+      ping: pingOk,
+      readyState: READY_STATES[readyState] ?? String(readyState),
+      dbName,
+    },
+  });
 });
 
 r.use('/auth', authRoutes);

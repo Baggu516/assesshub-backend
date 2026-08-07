@@ -1,7 +1,19 @@
+import {
+  ollamaBaseUrl,
+  ollamaConfigured,
+  resolveOllamaChatModel,
+} from '../ai/ollama.util.js';
+
 const FETCH_TIMEOUT_MS = 25_000;
+const OLLAMA_FETCH_TIMEOUT_MS = 120_000;
 
 function llmConfigured() {
-  return Boolean(process.env.GEMINI_API_KEY?.trim() || process.env.GROQ_API_KEY?.trim());
+  return Boolean(
+    process.env.GEMINI_API_KEY?.trim() ||
+      process.env.GROQ_API_KEY?.trim() ||
+      process.env.OPENAI_API_KEY?.trim() ||
+      ollamaConfigured()
+  );
 }
 
 async function geminiGenerate(prompt) {
@@ -68,8 +80,42 @@ async function groqGenerate(prompt) {
   }
 }
 
+async function ollamaGenerate(prompt) {
+  if (!ollamaConfigured()) return null;
+
+  const model = resolveOllamaChatModel();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OLLAMA_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${ollamaBaseUrl()}/api/chat`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: false,
+        options: { temperature: 0.2, num_predict: 512 },
+      }),
+    });
+    const json = await res.json();
+    if (!res.ok) return null;
+    return json?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function generateText(prompt) {
   if (!llmConfigured()) return null;
+  // Prefer local Ollama when configured (typical self-hosted setup).
+  if (ollamaConfigured()) {
+    const local = await ollamaGenerate(prompt);
+    if (local) return local;
+  }
   const gemini = await geminiGenerate(prompt);
   if (gemini) return gemini;
   return groqGenerate(prompt);

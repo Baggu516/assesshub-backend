@@ -18,9 +18,18 @@ async function main() {
   }
 
   await connectDb();
-  const port = parseInt(process.env.PORT, 10);
-  app.listen(port, () => {
+  const port = parseInt(process.env.PORT, 10) || 4000;
+  const server = app.listen(port, () => {
     console.log(`API listening on port ${port} (${process.env.NODE_ENV})`);
+  });
+  server.on('error', (err) => {
+    if (err?.code === 'EADDRINUSE') {
+      console.error(
+        `Port ${port} is already in use. Stop the other API process (or run npm run predev), then try again.`
+      );
+      process.exit(1);
+    }
+    throw err;
   });
 }
 

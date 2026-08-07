@@ -46,28 +46,45 @@ export const deleteAiChatHandler = asyncHandler(async (req, res) => {
 });
 
 export const postAiChatReplyHandler = asyncHandler(async (req, res) => {
-  const { provider, content } = req.body;
+  const { provider, content, model } = req.body;
   const result = await aiChats.replyInAiChat(
     req.tenantModels,
     req.user,
     req.tenant.orgId,
     req.params.id,
     provider,
-    content
+    content,
+    { model }
+  );
+  res.json(result);
+});
+
+export const postAiChatFeedbackHandler = asyncHandler(async (req, res) => {
+  const { messageIndex, rating } = req.body;
+  const result = await aiChats.setAiChatMessageFeedback(
+    req.tenantModels,
+    req.user._id,
+    req.tenant.orgId,
+    req.params.id,
+    messageIndex,
+    rating
   );
   res.json(result);
 });
 
 export const postAiChat = asyncHandler(async (req, res) => {
-  const { provider, messages } = req.body;
+  const { provider, messages, model } = req.body;
   const lastUser = [...messages].reverse().find((m) => m.role === 'user');
   const query = lastUser?.content || '';
   const history = messages.slice(0, -1);
   const kbStatus = await getKnowledgeBaseStatus(req.tenantModels, req.tenant.orgId);
   const routing = decideChatIntent(query, history, kbStatus.available);
   let knowledgeContext = '';
+  let knowledgeSources = [];
   if (routing.useKnowledgeBase) {
-    knowledgeContext = await retrieveKnowledgeContext(req.tenantModels, req.tenant.orgId, query);
+    const retrieved = await retrieveKnowledgeContext(req.tenantModels, req.tenant.orgId, query);
+    knowledgeContext = retrieved.context || '';
+    knowledgeSources = retrieved.sources || [];
   }
   const intentLabel = {
     general: 'General help; use workload only.',
@@ -80,10 +97,11 @@ export const postAiChat = asyncHandler(async (req, res) => {
     includeWorkload: routing.useWorkload,
     chatIntent: intentLabel,
   });
-  const content = await runAiChat(provider, systemText, messages);
+  const content = await runAiChat(provider, systemText, messages, { model });
   res.json({
     message: { role: 'assistant', content },
     knowledgeBaseUsed: Boolean(knowledgeContext?.trim()),
+    knowledgeSources,
     chatIntent: routing.intent,
   });
 });

@@ -1,34 +1,47 @@
 import mongoose from 'mongoose';
 
-export const CHUNKING_STRATEGIES = ['fixed', 'recursive', 'semantic', 'source'];
-export const EMBEDDING_PROVIDERS = ['gemini', 'huggingface'];
+/** Stored strategies: original | semantic (preferred) plus legacy internal names. */
+export const CHUNKING_STRATEGIES = [
+  'original',
+  'semantic',
+  'fixed',
+  'recursive',
+  'source',
+];
+/** Active provider. Legacy DB values (gemini/huggingface) are healed to ollama on use. */
+export const EMBEDDING_PROVIDERS = ['ollama'];
+export const LEGACY_EMBEDDING_PROVIDERS = ['ollama', 'gemini', 'huggingface'];
 
 export const knowledgeBaseConfigSchema = new mongoose.Schema(
   {
     orgId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true, unique: true },
-    /** @deprecated Derived from chunking toggles; kept for backward compatibility. */
+    /** Preferred: 'original' | 'semantic'. Legacy values (source/recursive/fixed) still accepted. */
     chunkingStrategy: {
       type: String,
       enum: CHUNKING_STRATEGIES,
-      default: 'recursive',
+      default: 'semantic',
     },
-    /** @deprecated Use targetTokens; kept for backward compatibility. */
-    chunkSize: { type: Number, default: 500, min: 100, max: 2000 },
-    /** @deprecated Use overlapTokens; kept for backward compatibility. */
-    chunkOverlap: { type: Number, default: 50, min: 0, max: 400 },
+    /** Token budget per chunk (also mirrored to targetTokens). */
+    chunkSize: { type: Number, default: 400, min: 100, max: 2000 },
+    /** Token overlap between consecutive chunks (also mirrored to overlapTokens). */
+    chunkOverlap: { type: Number, default: 80, min: 0, max: 400 },
+    /** @deprecated Derived from chunkingStrategy === 'original'. */
     sourceOnlyMode: { type: Boolean, default: false },
+    /** @deprecated Derived from chunkingStrategy === 'semantic'. */
     semanticSplitting: { type: Boolean, default: true },
     syntheticQuestions: { type: Boolean, default: true },
     autoSummary: { type: Boolean, default: true },
     multiHopSearch: { type: Boolean, default: true },
+    /** @deprecated Alias of chunkSize (tokens). */
     targetTokens: { type: Number, default: 400, min: 100, max: 2000 },
+    /** @deprecated Alias of chunkOverlap (tokens). */
     overlapTokens: { type: Number, default: 80, min: 0, max: 400 },
     embeddingProvider: {
       type: String,
-      enum: EMBEDDING_PROVIDERS,
-      default: 'gemini',
+      enum: LEGACY_EMBEDDING_PROVIDERS,
+      default: 'ollama',
     },
-    embeddingModel: { type: String, default: 'gemini-embedding-001', trim: true, maxlength: 120 },
+    embeddingModel: { type: String, default: 'nomic-embed-text', trim: true, maxlength: 120 },
   },
   { timestamps: true }
 );

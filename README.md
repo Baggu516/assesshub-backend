@@ -16,7 +16,7 @@ src/
   modules/            # Feature modules (routes → controller → service)
   routes/             # /api aggregator
   utils/              # Pure helpers (jwt, errors, mailer, …)
-scripts/              # CLI / ops (seed, request examples)
+scripts/              # CLI / ops (seed, free-port)
 ```
 
 ## Tenancy

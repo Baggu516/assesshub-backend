@@ -1,9 +1,24 @@
 import mongoose from 'mongoose';
 
+const knowledgeSourceSchema = new mongoose.Schema(
+  {
+    documentId: { type: String, required: true },
+    title: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
 const messageSchema = new mongoose.Schema(
   {
     role: { type: String, enum: ['user', 'assistant'], required: true },
     content: { type: String, required: true, maxlength: 12000 },
+    /** Set on user messages: whether RAG snippets were injected for this turn. */
+    knowledgeBaseUsed: { type: Boolean, default: undefined },
+    knowledgeSources: { type: [knowledgeSourceSchema], default: undefined },
+    askedAt: { type: Date, default: undefined },
+    /** Set on assistant messages from thumbs up/down. */
+    feedback: { type: String, enum: ['up', 'down'], default: undefined },
+    feedbackAt: { type: Date, default: undefined },
   },
   { _id: false }
 );
@@ -17,6 +32,7 @@ export const aiChatSessionSchema = new mongoose.Schema(
     /** Reused on follow-ups to avoid RAG on every message in the same thread. */
     cachedKnowledgeQuery: { type: String, default: '', maxlength: 2000 },
     cachedKnowledgeContext: { type: String, default: '', maxlength: 50000 },
+    cachedKnowledgeSources: { type: [knowledgeSourceSchema], default: [] },
   },
   { timestamps: true }
 );

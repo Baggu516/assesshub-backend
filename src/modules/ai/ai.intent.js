@@ -1,12 +1,21 @@
 /**
  * Lightweight routing: when to run RAG vs workload-only (no extra LLM call).
+ * KB docs are school/org materials (policies, handbooks, curriculum, etc.).
  */
 
 const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|good morning|good afternoon)\b[!.,?\s]*$/i;
+
+/** Dashboard / assessment activity for this user (not school handbook content). */
 const WORKLOAD_RE =
-  /\b(assessment|assessments|submission|submissions|score|scores|student|students|pending|dashboard|assigned|completion|due date|my work|focus on|grade|grades|quiz|exam)\b/i;
+  /\b(my assessment|my assessments|my submission|my submissions|my score|my scores|my grade|my grades|pending assessment|dashboard|assigned to me|completion rate|due date|my work|focus on|quiz score|exam score)\b/i;
+
+/**
+ * School / org knowledge-base topics (handbooks, policies, curriculum, campus life).
+ * Prefer RAG when these appear and indexed docs exist.
+ */
 const KNOWLEDGE_RE =
-  /\b(policy|policies|prd|document|documents|upload|uploaded|manual|guide|handbook|requirement|requirements|feature|features|section|chapter|according to|in the doc|knowledge base|rentflow|product spec|specification|process|procedure|how do we|what does .+ say)\b/i;
+  /\b(policy|policies|document|documents|manual|guide|handbook|syllabus|curriculum|school|schools|campus|classroom|teacher|teachers|principal|parent|parents|guardian|fee|fees|tuition|admission|attendance|timetable|schedule|uniform|discipline|leave|holiday|holidays|exam rules|grading policy|promotion|section|chapter|according to|in the doc|knowledge base|requirement|requirements|procedure|procedures|how do we|what does .+ say|who is|what is|explain|tell me about)\b/i;
+
 const FOLLOW_UP_RE = /^(yes|no|why|how|what about|and |also |more|explain|elaborate|continue)\b/i;
 
 /**
@@ -75,17 +84,17 @@ export function decideChatIntent(query, history, kbAvailable) {
     };
   }
 
-  // Ambiguous: prefer workload only to avoid RAG on every vague question
+  // School KB is the main source for open questions — try RAG by default when docs exist.
+  // Keep workload on longer questions so dashboard help still works.
   if (q.length < 40) {
     return {
-      intent: 'workload_only',
-      useKnowledgeBase: false,
-      useWorkload: true,
-      reason: 'short_ambiguous',
+      intent: 'knowledge_only',
+      useKnowledgeBase: true,
+      useWorkload: false,
+      reason: 'short_prefer_kb',
     };
   }
 
-  // Longer general question — try knowledge (might be about org docs)
   return {
     intent: 'knowledge_and_workload',
     useKnowledgeBase: true,

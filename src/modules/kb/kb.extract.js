@@ -1,8 +1,8 @@
-import fs from 'fs/promises';
 import path from 'path';
 import { createRequire } from 'node:module';
 import mammoth from 'mammoth';
 import * as cheerio from 'cheerio';
+import { readStorageBytes } from '../../utils/s3.js';
 
 const require = createRequire(import.meta.url);
 /** Avoid `pdf-parse/index.js` — it runs a debug harness that reads `./test/data/05-versions-space.pdf`. */
@@ -35,9 +35,7 @@ export function detectFileType(originalName, mimeType = '') {
   return null;
 }
 
-export async function extractTextFromFile(filePath, fileType) {
-  const buf = await fs.readFile(filePath);
-
+export async function extractTextFromBuffer(buf, fileType) {
   if (fileType === 'txt') {
     return normalizeText(buf.toString('utf8'));
   }
@@ -59,4 +57,10 @@ export async function extractTextFromFile(filePath, fileType) {
   }
 
   throw new Error(`Unsupported file type: ${fileType}`);
+}
+
+/** Supports local filesystem paths and `s3://bucket/key` refs. */
+export async function extractTextFromFile(storagePath, fileType) {
+  const buf = await readStorageBytes(storagePath);
+  return extractTextFromBuffer(buf, fileType);
 }
