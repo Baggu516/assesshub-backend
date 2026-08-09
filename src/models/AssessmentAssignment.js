@@ -27,6 +27,8 @@ export const assessmentAssignmentSchema = new mongoose.Schema(
       index: true,
     },
     dueDate: { type: Date, default: null },
+    /** Groups used when assigning (for reopen / edit UX). Empty if assigned by studentIds only. */
+    sourceGroupIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'StudentGroup' }],
     status: { type: String, enum: ASSIGNMENT_STATUSES, default: 'pending' },
     submittedAt: { type: Date, default: null },
     score: { type: Number, min: 0, default: 0 },

@@ -187,11 +187,15 @@ export async function deleteStudentGroup(models, actor, orgId, groupId) {
   return { ok: true };
 }
 
-/** Resolve student IDs from group IDs the actor may use for assignment. */
-export async function resolveGroupStudentIds(models, actor, orgId, groupIds) {
+/**
+ * Resolve groups for assignment. Returns student IDs and which groups each student came from.
+ */
+export async function resolveGroupsForAssign(models, actor, orgId, groupIds) {
   const { StudentGroup } = models;
-  const uniqueGroupIds = [...new Set(groupIds.map(String))];
-  if (!uniqueGroupIds.length) return [];
+  const uniqueGroupIds = [...new Set((groupIds || []).map(String))];
+  if (!uniqueGroupIds.length) {
+    return { studentIds: [], studentToGroupIds: new Map() };
+  }
 
   const groups = await StudentGroup.find({
     _id: { $in: uniqueGroupIds },
@@ -204,5 +208,25 @@ export async function resolveGroupStudentIds(models, actor, orgId, groupIds) {
     throw err;
   }
 
-  return [...new Set(groups.flatMap((g) => (g.studentIds || []).map(String)))];
+  const studentToGroupIds = new Map();
+  for (const g of groups) {
+    const gid = String(g._id);
+    for (const sid of g.studentIds || []) {
+      const key = String(sid);
+      const list = studentToGroupIds.get(key) || [];
+      list.push(gid);
+      studentToGroupIds.set(key, list);
+    }
+  }
+
+  return {
+    studentIds: [...studentToGroupIds.keys()],
+    studentToGroupIds,
+  };
+}
+
+/** Resolve student IDs from group IDs the actor may use for assignment. */
+export async function resolveGroupStudentIds(models, actor, orgId, groupIds) {
+  const { studentIds } = await resolveGroupsForAssign(models, actor, orgId, groupIds);
+  return studentIds;
 }

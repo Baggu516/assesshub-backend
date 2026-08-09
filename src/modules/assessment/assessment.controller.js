@@ -11,6 +11,7 @@ import {
   getAssignment,
   submitAssignment,
   getAssessmentResults,
+  getAssessmentAssignmentSummary,
 } from './assessment.service.js';
 
 export const postAssessment = asyncHandler(async (req, res) => {
@@ -99,6 +100,17 @@ export const postSubmitAssignment = asyncHandler(async (req, res) => {
 
 export const getResults = asyncHandler(async (req, res) => {
   const result = await getAssessmentResults(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    req.query
+  );
+  res.json(result);
+});
+
+export const getAssignmentSummary = asyncHandler(async (req, res) => {
+  const result = await getAssessmentAssignmentSummary(
     req.tenantModels,
     req.user,
     req.tenant.orgId,

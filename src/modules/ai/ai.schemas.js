@@ -46,3 +46,10 @@ export const aiChatBodySchema = z
       });
     }
   });
+
+export const aiGenerateQuestionsBodySchema = z.object({
+  prompt: z.string().trim().min(8).max(4000),
+  questionCount: z.number().int().min(1).max(20).optional().default(5),
+  provider: aiProviderSchema.optional(),
+  model: z.string().trim().min(1).max(120).optional(),
+});

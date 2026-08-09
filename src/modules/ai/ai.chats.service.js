@@ -260,10 +260,16 @@ export async function replyInAiChat(models, actor, orgId, chatId, provider, cont
   const knowledgeBaseUsed = Boolean(knowledgeContext?.trim());
 
   const intentLabel = {
-    general: 'General help; use workload only.',
-    workload_only: 'Focus on the user’s assessments and dashboard metrics only.',
-    knowledge_only: 'Focus on organization knowledge base snippets only.',
-    knowledge_and_workload: 'Combine organization knowledge with the user’s workload when both apply.',
+    general: 'General help; use workload only. Answer briefly; no knowledge-base suggestions.',
+    workload_only:
+      actor.hierarchyRole === 'admin'
+        ? 'Admin view: break down activity under each teacher (completed vs pending from summary.byTeacher). End with one overall suggestion. No contradictions; no knowledge-base filler.'
+        : 'Focus on the user’s assessments and scores. If reviewPlan or low scores exist, coach them to reopen that assessment, review incorrect questions, and study those topics. Do not mention the knowledge base unless asked. Be concise and actionable.',
+    knowledge_only: 'Focus on organization knowledge base snippets only. Cite sources. No filler closings.',
+    knowledge_and_workload:
+      actor.hierarchyRole === 'admin'
+        ? 'Prefer summary.byTeacher for org stats. Use KB only if directly relevant. End with one overall suggestion.'
+        : 'Use workload for assessment/score facts. Use knowledge base snippets only if they directly help. No filler closings or generic “check the knowledge base” advice.',
   }[routing.intent];
 
   const systemText = await buildAiSystemPrompt(models, actor, orgId, {

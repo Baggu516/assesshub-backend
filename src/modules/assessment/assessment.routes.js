@@ -25,6 +25,7 @@ import {
   getOneAssignment,
   postSubmitAssignment,
   getResults,
+  getAssignmentSummary,
 } from './assessment.controller.js';
 
 const r = Router();
@@ -76,6 +77,12 @@ r.get(
   validateQuery(listResultsQuery),
   requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
   getResults
+);
+r.get(
+  '/:id/assignment-summary',
+  validateQuery(listResultsQuery),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  getAssignmentSummary
 );
 
 export default r;

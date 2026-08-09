@@ -3,6 +3,7 @@ import { buildAiSystemPrompt, runAiChat, aiProviderAvailability } from './ai.ser
 import { retrieveKnowledgeContext, getKnowledgeBaseStatus } from '../kb/kb.service.js';
 import { decideChatIntent } from './ai.intent.js';
 import * as aiChats from './ai.chats.service.js';
+import { generateAssessmentDraft } from './ai.assessment.service.js';
 
 export const getAiProviders = asyncHandler(async (_req, res) => {
   res.json(aiProviderAvailability());
@@ -103,5 +104,15 @@ export const postAiChat = asyncHandler(async (req, res) => {
     knowledgeBaseUsed: Boolean(knowledgeContext?.trim()),
     knowledgeSources,
     chatIntent: routing.intent,
+  });
+});
+
+export const postAiGenerateQuestions = asyncHandler(async (req, res) => {
+  const draft = await generateAssessmentDraft(req.body);
+  res.json({
+    title: draft.title,
+    description: draft.description,
+    questions: draft.questions,
+    provider: draft.provider,
   });
 });

@@ -2,7 +2,10 @@ import mongoose from 'mongoose';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
 import { logActivity } from '../../utils/activity.js';
 import { allowedStudentIdSet, listAssignableStudents } from '../shared/studentScope.service.js';
-import { resolveGroupStudentIds } from '../student-group/student-group.service.js';
+import {
+  resolveGroupsForAssign,
+  listStudentGroups,
+} from '../student-group/student-group.service.js';
 
 const ACTIVE = { deletedAt: null };
 
@@ -378,9 +381,9 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
 
   const allowed = await allowedStudentIdSet(models, actor, orgId);
 
-  const fromGroups = body.groupIds?.length
-    ? await resolveGroupStudentIds(models, actor, orgId, body.groupIds)
-    : [];
+  const { studentIds: fromGroups, studentToGroupIds } = body.groupIds?.length
+    ? await resolveGroupsForAssign(models, actor, orgId, body.groupIds)
+    : { studentIds: [], studentToGroupIds: new Map() };
   const studentIds = [...new Set([...(body.studentIds || []).map(String), ...fromGroups])];
 
   if (!studentIds.length) {
@@ -406,8 +409,33 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
 
   const maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
   const created = [];
+  const dueDateValue = body.dueDate || null;
 
   for (const studentId of studentIds) {
+    const sourceGroupIds = (studentToGroupIds.get(String(studentId)) || []).map(
+      (gid) => new mongoose.Types.ObjectId(gid)
+    );
+    const update = {
+      // Due date always applies to every student in the selected groups.
+      $set: {
+        dueDate: dueDateValue,
+      },
+      $setOnInsert: {
+        orgId: oid,
+        assessmentId: assessment._id,
+        studentId: new mongoose.Types.ObjectId(studentId),
+        assignedBy: actor._id,
+        academicYearId: year._id,
+        status: 'pending',
+        maxScore,
+        score: 0,
+        answers: [],
+      },
+    };
+    if (sourceGroupIds.length) {
+      update.$addToSet = { sourceGroupIds: { $each: sourceGroupIds } };
+    }
+
     const assignment = await AssessmentAssignment.findOneAndUpdate(
       {
         orgId: oid,
@@ -415,20 +443,7 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
         studentId,
         academicYearId: year._id,
       },
-      {
-        $setOnInsert: {
-          orgId: oid,
-          assessmentId: assessment._id,
-          studentId: new mongoose.Types.ObjectId(studentId),
-          assignedBy: actor._id,
-          academicYearId: year._id,
-          dueDate: body.dueDate || null,
-          status: 'pending',
-          maxScore,
-          score: 0,
-          answers: [],
-        },
-      },
+      update,
       { upsert: true, new: true }
     );
     created.push(
@@ -701,5 +716,92 @@ export async function getAssessmentResults(models, actor, orgId, assessmentId, q
         academicYearLabel: ay?.label || null,
       });
     }),
+  };
+}
+
+/** Summary of who an assessment is already assigned to (for Assign modal reopen). */
+export async function getAssessmentAssignmentSummary(models, actor, orgId, assessmentId, query = {}) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE }).lean();
+  if (!assessment) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const { filter: yearFilter, year } = await academicYearAssignmentFilter(
+    models,
+    orgId,
+    query.academicYearId
+  );
+
+  const assignments = await AssessmentAssignment.find({
+    orgId: oid,
+    assessmentId,
+    ...yearFilter,
+  }).lean();
+
+  const assignedStudentIds = [...new Set(assignments.map((a) => String(a.studentId)))];
+  const assignedSet = new Set(assignedStudentIds);
+
+  const persistedGroupIds = new Set();
+  for (const a of assignments) {
+    for (const gid of a.sourceGroupIds || []) {
+      persistedGroupIds.add(String(gid));
+    }
+  }
+
+  let groups = [];
+  try {
+    const listed = await listStudentGroups(models, actor, orgId);
+    groups = listed.groups || [];
+  } catch {
+    groups = [];
+  }
+
+  // Prefer stored source groups when present; otherwise infer fully-covered groups (legacy assigns).
+  let assignedGroupIds;
+  if (persistedGroupIds.size > 0) {
+    assignedGroupIds = [...persistedGroupIds];
+  } else {
+    assignedGroupIds = groups
+      .filter((g) => {
+        const members = g.studentIds || [];
+        return members.length > 0 && members.every((sid) => assignedSet.has(String(sid)));
+      })
+      .map((g) => g.id);
+  }
+  const withDue = assignments.filter((a) => a.dueDate);
+  const dueDate = withDue.length
+    ? withDue.sort((a, b) => new Date(b.dueDate) - new Date(a.dueDate))[0].dueDate
+    : null;
+
+  const groupNameById = new Map(groups.map((g) => [g.id, g.name]));
+  const assignedGroups = assignedGroupIds.map((id) => ({
+    id,
+    name: groupNameById.get(id) || 'Group',
+  }));
+
+  return {
+    academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
+    assignedStudentIds,
+    assignedGroupIds,
+    assignedGroups,
+    totalAssigned: assignedStudentIds.length,
+    dueDate,
   };
 }

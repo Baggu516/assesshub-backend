@@ -5,7 +5,7 @@ const questionOptionSchema = z.object({
   isCorrect: z.boolean().default(false),
 });
 
-const questionSchema = z
+export const questionSchema = z
   .object({
     type: z.enum(['single_select', 'multi_select', 'short_answer']),
     prompt: z.string().trim().min(1).max(2000),

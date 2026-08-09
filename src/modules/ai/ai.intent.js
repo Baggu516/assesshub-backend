@@ -7,7 +7,7 @@ const GREETING_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|good morning|good a
 
 /** Dashboard / assessment activity for this user (not school handbook content). */
 const WORKLOAD_RE =
-  /\b(my assessment|my assessments|my submission|my submissions|my score|my scores|my grade|my grades|pending assessment|dashboard|assigned to me|completion rate|due date|my work|focus on|quiz score|exam score)\b/i;
+  /\b(my assessment|my assessments|my submission|my submissions|my score|my scores|my grade|my grades|recent scores?|how am i doing|how much (did )?i score|what did i score|score on|scores?\b|graded?\b|pending assessment|pending assessments|pending vs|pending turn-?ins?|still need to complete|dashboard|assigned to me|completion rate|due date|my work|focus on|this week|this month|assessment activity|organization assessment|leaders watch|by teacher|each teacher|break down|completed|quiz score|exam score|student submission|student submissions|submissions? trending|submission trends?|turned in|turn-?in|awaiting|how many .+ submit|who has(n't| not)? submitted)\b/i;
 
 /**
  * School / org knowledge-base topics (handbooks, policies, curriculum, campus life).
@@ -45,7 +45,16 @@ export function decideChatIntent(query, history, kbAvailable) {
   }
 
   const wantsKnowledge = KNOWLEDGE_RE.test(lower);
-  const wantsWorkload = WORKLOAD_RE.test(lower);
+  let wantsWorkload = WORKLOAD_RE.test(lower);
+
+  // "teacher(s)" alone is often KB (staff handbook), but with pending/completed/submissions it's org workload.
+  if (
+    !wantsWorkload &&
+    /\bteachers?\b/i.test(lower) &&
+    /\b(pending|completed|submission|submissions|turn-?in|assigned|assessment activity)\b/i.test(lower)
+  ) {
+    wantsWorkload = true;
+  }
 
   if (wantsKnowledge && !wantsWorkload) {
     return {
