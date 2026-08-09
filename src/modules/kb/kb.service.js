@@ -637,7 +637,7 @@ export async function retrieveKnowledgeContext(models, orgId, query) {
       sourceMap.set(s.documentId, { documentId: s.documentId, title: s.docTitle, score: s.score });
     }
   }
-
+  
   return {
     context: lines.join('\n\n'),
     sources: [...sourceMap.values()],

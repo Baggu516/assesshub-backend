@@ -13,14 +13,37 @@ import {
   isPlatformPasswordLoginConfigured,
   validatePlatformCredentials,
 } from './platformAuth.util.js';
+import {
+  normalizeOrgFeatures,
+  planFromFeatures,
+} from '../../middleware/plan.middleware.js';
+
+function resolveIncomingFeatures(body, existingFeatures = null) {
+  if (body.features) {
+    return {
+      aiDashboard: body.features.aiDashboard === true,
+      aiAssessmentCreate: body.features.aiAssessmentCreate === true,
+    };
+  }
+  if (body.plan !== undefined) {
+    const current = existingFeatures || { aiDashboard: false, aiAssessmentCreate: false };
+    return {
+      aiDashboard: body.plan === 'ai_dashboard',
+      aiAssessmentCreate: current.aiAssessmentCreate === true,
+    };
+  }
+  return null;
+}
 
 export function serializeOrganization(o) {
+  const features = normalizeOrgFeatures(o);
   return {
     id: o._id.toString(),
     name: o.name,
     subdomain: o.subdomain,
     isActive: o.isActive,
-    plan: o.plan || 'ai_dashboard',
+    plan: planFromFeatures(features),
+    features,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
     settings: o.settings,
@@ -77,11 +100,17 @@ export async function createOrganizationWithOptionalAdmin(body) {
   const exists = await Organization.findOne({ subdomain: sub });
   if (exists) throw new AppError('Subdomain already taken', 409);
 
+  const features = resolveIncomingFeatures(body) || {
+    aiDashboard: false,
+    aiAssessmentCreate: false,
+  };
+
   const org = await Organization.create({
     name: body.name,
     subdomain: sub,
     isActive: body.isActive !== false,
-    plan: body.plan === 'ai_dashboard' ? 'ai_dashboard' : 'assessments_only',
+    features,
+    plan: planFromFeatures(features),
   });
 
   const wantsAdmin = !!(body.adminEmail && body.adminPassword);
@@ -137,7 +166,13 @@ export async function patchOrganizationById(id, body) {
 
   if (body.name !== undefined) org.name = body.name;
   if (body.isActive !== undefined) org.isActive = body.isActive;
-  if (body.plan !== undefined) org.plan = body.plan;
+
+  const nextFeatures = resolveIncomingFeatures(body, normalizeOrgFeatures(org));
+  if (nextFeatures) {
+    org.features = nextFeatures;
+    org.plan = planFromFeatures(nextFeatures);
+  }
+
   await org.save();
 
   return serializeOrganization(org.toObject());

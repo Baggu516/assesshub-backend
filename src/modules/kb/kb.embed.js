@@ -87,3 +87,6 @@ export function cosineSimilarity(a, b) {
   const denom = Math.sqrt(na) * Math.sqrt(nb);
   return denom ? dot / denom : -1;
 }
+// Score is roughly -1…1; closer to 1 means more similar direction.
+// Same direction → high positive score. Orthogonal → ~0. Opposite → negative. In your KB retrieval, higher score = better match for ranking.
+

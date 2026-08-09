@@ -13,13 +13,20 @@ const organizationSchema = new mongoose.Schema(
     },
     isActive: { type: Boolean, default: true },
     /**
-     * assessments_only — core assessments only (no dashboard AI / knowledge base)
-     * ai_dashboard — assessments + dashboard AI chat + knowledge base
+     * Legacy summary of AI dashboard entitlement.
+     * Prefer `features`; kept in sync when features are saved.
+     * assessments_only — no dashboard AI / knowledge base
+     * ai_dashboard — dashboard AI chat + knowledge base
      */
     plan: {
       type: String,
       enum: ['assessments_only', 'ai_dashboard'],
       default: 'assessments_only',
+    },
+    /** Independent add-ons on top of always-included assessments. */
+    features: {
+      aiDashboard: { type: Boolean, default: false },
+      aiAssessmentCreate: { type: Boolean, default: false },
     },
     settings: {
       timezone: { type: String, default: 'UTC' },

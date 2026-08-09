@@ -5,6 +5,11 @@ export const loginPlatformSchema = z.object({
   password: z.string().min(1),
 });
 
+const orgFeaturesSchema = z.object({
+  aiDashboard: z.boolean(),
+  aiAssessmentCreate: z.boolean(),
+});
+
 export const createOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200),
@@ -14,7 +19,9 @@ export const createOrganizationSchema = z
       .max(63)
       .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, digits, and hyphens only'),
     isActive: z.boolean().optional(),
+    /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
+    features: orgFeaturesSchema.optional(),
     adminEmail: z.string().email().optional(),
     adminPassword: z.string().min(8).optional(),
     firstName: z.string().max(100).optional(),
@@ -36,12 +43,18 @@ export const patchOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     isActive: z.boolean().optional(),
+    /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
+    features: orgFeaturesSchema.optional(),
   })
   .refine(
-    (data) => data.name !== undefined || data.isActive !== undefined || data.plan !== undefined,
+    (data) =>
+      data.name !== undefined ||
+      data.isActive !== undefined ||
+      data.plan !== undefined ||
+      data.features !== undefined,
     {
-      message: 'Provide at least one of name, isActive, plan',
+      message: 'Provide at least one of name, isActive, plan, features',
     }
   );
 
