@@ -4,6 +4,7 @@ import authRoutes from '../modules/auth/auth.routes.js';
 import userRoutes from '../modules/user/user.routes.js';
 import permissionRoutes from '../modules/permission/permission.routes.js';
 import tenantRoutes from '../modules/tenant/tenant.routes.js';
+import publicRoutes from '../modules/public/public.routes.js';
 import reportsRoutes from '../modules/reports/reports.routes.js';
 import notificationRoutes from '../modules/notification/notification.routes.js';
 import platformRoutes from '../modules/platform/platform.routes.js';
@@ -15,6 +16,7 @@ import classRoutes from '../modules/class/class.routes.js';
 import academicYearRoutes from '../modules/academic-year/academic-year.routes.js';
 import classMasterRoutes from '../modules/class-master/class-master.routes.js';
 import promotionRoutes from '../modules/promotion/promotion.routes.js';
+import learningResourceRoutes from '../modules/learning-resource/learning-resource.routes.js';
 
 const r = Router();
 
@@ -53,6 +55,7 @@ r.use('/auth', authRoutes);
 r.use('/users', userRoutes);
 r.use('/permissions', permissionRoutes);
 r.use('/tenant', tenantRoutes);
+r.use('/public', publicRoutes);
 r.use('/reports', reportsRoutes);
 r.use('/notifications', notificationRoutes);
 r.use('/ai', aiRoutes);
@@ -63,6 +66,7 @@ r.use('/classes', classRoutes);
 r.use('/academic-years', academicYearRoutes);
 r.use('/class-masters', classMasterRoutes);
 r.use('/promotions', promotionRoutes);
+r.use('/learning-resources', learningResourceRoutes);
 r.use('/platform', platformRoutes);
 
 export default r;

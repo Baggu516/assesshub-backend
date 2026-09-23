@@ -14,8 +14,13 @@ export const registerOrgSchema = z.object({
 });
 
 export const loginSchema = z.object({
-  email: z.string().email(),
+  /** Email or registration ID (DOMAIN + 5 digits) */
+  email: z.string().min(1).max(254).optional(),
+  identifier: z.string().min(1).max(254).optional(),
   password: z.string().min(1),
+}).refine((d) => Boolean(d.email || d.identifier), {
+  message: 'Email or registration ID is required',
+  path: ['email'],
 });
 
 export const refreshSchema = z.object({

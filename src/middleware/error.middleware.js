@@ -9,6 +9,12 @@ export function errorMiddleware(err, req, res, _next) {
     });
   }
 
+  if (err?.name === 'MulterError' || err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({
+      error: err.code === 'LIMIT_FILE_SIZE' ? 'File is too large' : err.message || 'Upload failed',
+    });
+  }
+
   const status = err instanceof AppError ? err.status : err.status || err.statusCode || 500;
   const message = err.message || 'Internal Server Error';
 

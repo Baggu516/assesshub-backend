@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
 
 export const loginPlatformSchema = z.object({
   email: z.string().email(),
@@ -8,17 +9,26 @@ export const loginPlatformSchema = z.object({
 const orgFeaturesSchema = z.object({
   aiDashboard: z.boolean(),
   aiAssessmentCreate: z.boolean(),
+  worksheets: z.boolean().optional().default(false),
+  assessments: z.boolean().optional().default(false),
+  onlineExams: z.boolean().optional().default(false),
 });
+
+const subdomainSchema = z
+  .string()
+  .min(2)
+  .max(63)
+  .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, digits, and hyphens only')
+  .refine((s) => !isReservedSubdomain(s), {
+    message: 'This subdomain is reserved',
+  });
 
 export const createOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200),
-    subdomain: z
-      .string()
-      .min(2)
-      .max(63)
-      .regex(/^[a-z0-9-]+$/, 'Use lowercase letters, digits, and hyphens only'),
+    subdomain: subdomainSchema,
     isActive: z.boolean().optional(),
+    tagline: z.string().trim().max(160).optional(),
     /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
     features: orgFeaturesSchema.optional(),
@@ -43,6 +53,8 @@ export const patchOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     isActive: z.boolean().optional(),
+    tagline: z.string().trim().max(160).nullable().optional(),
+    clearLogo: z.boolean().optional(),
     /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
     features: orgFeaturesSchema.optional(),
@@ -52,9 +64,11 @@ export const patchOrganizationSchema = z
       data.name !== undefined ||
       data.isActive !== undefined ||
       data.plan !== undefined ||
-      data.features !== undefined,
+      data.features !== undefined ||
+      data.tagline !== undefined ||
+      data.clearLogo !== undefined,
     {
-      message: 'Provide at least one of name, isActive, plan, features',
+      message: 'Provide at least one of name, isActive, plan, features, tagline, clearLogo',
     }
   );
 

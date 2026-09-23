@@ -25,6 +25,36 @@ export function s3Bucket() {
   return env('S3_BUCKET');
 }
 
+/**
+ * Public HTTPS URL for a key in the configured bucket (Supabase Storage).
+ * Prefer S3_PUBLIC_BASE_URL; otherwise derive from Supabase S3 endpoint.
+ */
+export function s3PublicUrlForKey(key) {
+  const cleanKey = key.replace(/^\/+/, '');
+  const explicit = env('S3_PUBLIC_BASE_URL');
+  if (explicit) {
+    return `${explicit.replace(/\/$/, '')}/${cleanKey}`;
+  }
+
+  const endpoint = env('S3_ENDPOINT');
+  const supabase = endpoint.match(/^https:\/\/([a-z0-9-]+)\.storage\.supabase\.co/i);
+  if (supabase) {
+    return `https://${supabase[1]}.supabase.co/storage/v1/object/public/${s3Bucket()}/${cleanKey}`;
+  }
+
+  if (endpoint) {
+    return `${endpoint.replace(/\/$/, '')}/${s3Bucket()}/${cleanKey}`;
+  }
+
+  return null;
+}
+
+export function publicUrlFromStorageRef(storagePath) {
+  const ref = parseStorageRef(storagePath);
+  if (!ref) return null;
+  return s3PublicUrlForKey(ref.key);
+}
+
 function getClient() {
   if (!s3Configured()) {
     throw new Error('S3 is not configured (set S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET)');

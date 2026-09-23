@@ -3,13 +3,10 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "AssessHub multi-tenant assessment API",
+  "description": "ClassTrio multi-tenant assessment API",
   "scripts": {
-    "predev": "node scripts/free-port.js",
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
-    "seed": "node scripts/seed.js",
-    "seed:platform": "node scripts/seed-platform-user.js"
+    "start": "node src/server.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",

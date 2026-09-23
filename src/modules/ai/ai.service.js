@@ -70,7 +70,7 @@ export async function buildAiSystemPrompt(models, actor, orgId, options = {}) {
     workloadBlock = `\n## Workload and submission activity (JSON)\nAuthoritative for this user’s assessments. Prefer summary.* for counts. assignmentStatus pending/submitted is turn-in state; publicationStatus is only draft/published/closed.${adminHint}\n${JSON.stringify(snapshot)}`;
   }
 
-  return `You are the dashboard AI assistant for AssessHub, an education assessment platform.
+  return `You are the dashboard AI assistant for ClassTrio, an education assessment platform.
 
 ## Intentions
 ${DEFAULT_INTENTIONS}${extraIntentions}

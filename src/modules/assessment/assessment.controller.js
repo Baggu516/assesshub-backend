@@ -5,13 +5,20 @@ import {
   getAssessment,
   updateAssessment,
   publishAssessment,
+  unpublishAssessment,
+  deleteAssessment,
   assignAssessment,
   listAssessmentAssignees,
   listMyAssignments,
   getAssignment,
   submitAssignment,
+  recordFullscreenExit,
   getAssessmentResults,
   getAssessmentAssignmentSummary,
+  releaseAssessmentResults,
+  reattemptAssignment,
+  setAssignmentResultsHidden,
+  deleteAssignmentResult,
 } from './assessment.service.js';
 
 export const postAssessment = asyncHandler(async (req, res) => {
@@ -56,6 +63,26 @@ export const postPublishAssessment = asyncHandler(async (req, res) => {
   res.json({ assessment });
 });
 
+export const postUnpublishAssessment = asyncHandler(async (req, res) => {
+  const assessment = await unpublishAssessment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id
+  );
+  res.json({ assessment });
+});
+
+export const deleteOneAssessment = asyncHandler(async (req, res) => {
+  const result = await deleteAssessment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id
+  );
+  res.json(result);
+});
+
 export const postAssignAssessment = asyncHandler(async (req, res) => {
   const result = await assignAssessment(
     req.tenantModels,
@@ -79,6 +106,16 @@ export const getMyAssignments = asyncHandler(async (req, res) => {
 
 export const getOneAssignment = asyncHandler(async (req, res) => {
   const result = await getAssignment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.assignmentId
+  );
+  res.json(result);
+});
+
+export const postFullscreenExit = asyncHandler(async (req, res) => {
+  const result = await recordFullscreenExit(
     req.tenantModels,
     req.user,
     req.tenant.orgId,
@@ -116,6 +153,51 @@ export const getAssignmentSummary = asyncHandler(async (req, res) => {
     req.tenant.orgId,
     req.params.id,
     req.query
+  );
+  res.json(result);
+});
+
+export const postReleaseResults = asyncHandler(async (req, res) => {
+  const result = await releaseAssessmentResults(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    process.env.FRONTEND_URL
+  );
+  res.json(result);
+});
+
+export const postReattempt = asyncHandler(async (req, res) => {
+  const result = await reattemptAssignment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    req.params.assignmentId
+  );
+  res.json(result);
+});
+
+export const postHideResult = asyncHandler(async (req, res) => {
+  const result = await setAssignmentResultsHidden(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    req.params.assignmentId,
+    req.body?.hidden
+  );
+  res.json(result);
+});
+
+export const deleteResult = asyncHandler(async (req, res) => {
+  const result = await deleteAssignmentResult(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.id,
+    req.params.assignmentId
   );
   res.json(result);
 });

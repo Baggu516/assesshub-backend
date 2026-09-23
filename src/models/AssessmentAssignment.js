@@ -8,7 +8,7 @@ const answerSchema = new mongoose.Schema(
     selectedOptionIds: [{ type: mongoose.Schema.Types.ObjectId }],
     textAnswer: { type: String, default: '', maxlength: 200 },
     isCorrect: { type: Boolean, default: false },
-    pointsEarned: { type: Number, min: 0, default: 0 },
+    pointsEarned: { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -30,8 +30,21 @@ export const assessmentAssignmentSchema = new mongoose.Schema(
     /** Groups used when assigning (for reopen / edit UX). Empty if assigned by studentIds only. */
     sourceGroupIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'StudentGroup' }],
     status: { type: String, enum: ASSIGNMENT_STATUSES, default: 'pending' },
+    /** When the student first opened the CBT attempt */
+    startedAt: { type: Date, default: null },
+    /** Timer end (startedAt + assessment.durationMinutes) */
+    expiresAt: { type: Date, default: null },
+    submitReason: {
+      type: String,
+      enum: ['manual', 'timer', 'fullscreen_exits'],
+      default: undefined,
+    },
+    /** How many times the student left fullscreen during an online exam. */
+    fullscreenExitCount: { type: Number, min: 0, default: 0 },
     submittedAt: { type: Date, default: null },
-    score: { type: Number, min: 0, default: 0 },
+    /** Teacher hid this attempt's score from the student. The attempt itself stays. */
+    resultsHidden: { type: Boolean, default: false },
+    score: { type: Number, default: 0 },
     maxScore: { type: Number, min: 0, default: 0 },
     answers: [answerSchema],
   },

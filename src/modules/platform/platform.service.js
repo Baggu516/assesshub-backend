@@ -8,6 +8,7 @@ import {
   platformTokenExpiresIn,
   signPlatformToken,
 } from '../../utils/jwt.js';
+import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
 import { issueTenantSession, provisionOrganizationAdmin } from '../auth/auth.service.js';
 import {
   isPlatformPasswordLoginConfigured,
@@ -17,37 +18,83 @@ import {
   normalizeOrgFeatures,
   planFromFeatures,
 } from '../../middleware/plan.middleware.js';
+import { clearClientLogo, replaceClientLogo, uploadClientLogo } from './logo.service.js';
+
+function featureFlags(raw, fallback = {}) {
+  return {
+    aiDashboard: raw?.aiDashboard === true,
+    aiAssessmentCreate: raw?.aiAssessmentCreate === true,
+    worksheets: raw?.worksheets === true,
+    assessments: raw?.assessments === true,
+    onlineExams:
+      raw && Object.prototype.hasOwnProperty.call(raw, 'onlineExams')
+        ? raw.onlineExams === true
+        : fallback.onlineExams === true,
+  };
+}
 
 function resolveIncomingFeatures(body, existingFeatures = null) {
   if (body.features) {
-    return {
-      aiDashboard: body.features.aiDashboard === true,
-      aiAssessmentCreate: body.features.aiAssessmentCreate === true,
-    };
+    return featureFlags(body.features, existingFeatures || {});
   }
   if (body.plan !== undefined) {
-    const current = existingFeatures || { aiDashboard: false, aiAssessmentCreate: false };
-    return {
-      aiDashboard: body.plan === 'ai_dashboard',
-      aiAssessmentCreate: current.aiAssessmentCreate === true,
-    };
+    const current = existingFeatures || {};
+    return featureFlags(
+      {
+        ...current,
+        aiDashboard: body.plan === 'ai_dashboard',
+      },
+      current
+    );
   }
   return null;
 }
 
-export function serializeOrganization(o) {
+export function serializeOrganization(o, { poc } = {}) {
   const features = normalizeOrgFeatures(o);
-  return {
+  const hasLogo = Boolean(o.logoUrl || o.logoStoragePath);
+  const payload = {
     id: o._id.toString(),
     name: o.name,
     subdomain: o.subdomain,
     isActive: o.isActive,
+    logoUrl: hasLogo
+      ? o.logoUrl || `/api/public/tenants/${o.subdomain}/logo`
+      : null,
+    tagline: o.tagline || null,
     plan: planFromFeatures(features),
     features,
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
     settings: o.settings,
   };
+  if (poc !== undefined) payload.poc = poc;
+  return payload;
+}
+
+/** First tenant admin as point of contact (read-only for platform console). */
+export async function resolveOrganizationPoc(org) {
+  try {
+    const { User } = getTenantModels(org.subdomain);
+    const admin = await User.findOne({
+      orgId: org._id,
+      hierarchyRole: 'admin',
+      isActive: true,
+    })
+      .sort({ createdAt: 1 })
+      .select('firstName lastName email')
+      .lean();
+    if (!admin) return null;
+    const name = [admin.firstName, admin.lastName].filter(Boolean).join(' ').trim();
+    return {
+      name: name || null,
+      email: admin.email,
+      firstName: admin.firstName || '',
+      lastName: admin.lastName || '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function issuePlatformAccessToken() {
@@ -85,8 +132,8 @@ export async function authenticatePlatformLogin(emailRaw, password) {
 
 export async function getOrganizationStats() {
   const [totalOrganizations, activeOrganizations] = await Promise.all([
-    Organization.countDocuments(),
-    Organization.countDocuments({ isActive: true }),
+    Organization.countDocuments({ subdomain: { $ne: 'master' } }),
+    Organization.countDocuments({ subdomain: { $ne: 'master' }, isActive: true }),
   ]);
   return {
     totalOrganizations,
@@ -95,15 +142,26 @@ export async function getOrganizationStats() {
   };
 }
 
-export async function createOrganizationWithOptionalAdmin(body) {
+export async function createOrganizationWithOptionalAdmin(body, logoFile) {
   const sub = body.subdomain.toLowerCase();
+  if (isReservedSubdomain(sub)) {
+    throw new AppError('This subdomain is reserved', 400);
+  }
   const exists = await Organization.findOne({ subdomain: sub });
   if (exists) throw new AppError('Subdomain already taken', 409);
 
   const features = resolveIncomingFeatures(body) || {
     aiDashboard: false,
     aiAssessmentCreate: false,
+    worksheets: false,
+    assessments: false,
+    onlineExams: false,
   };
+
+  let logoFields = {};
+  if (logoFile) {
+    logoFields = await uploadClientLogo(logoFile, sub);
+  }
 
   const org = await Organization.create({
     name: body.name,
@@ -111,6 +169,8 @@ export async function createOrganizationWithOptionalAdmin(body) {
     isActive: body.isActive !== false,
     features,
     plan: planFromFeatures(features),
+    tagline: body.tagline || undefined,
+    ...logoFields,
   });
 
   const wantsAdmin = !!(body.adminEmail && body.adminPassword);
@@ -136,6 +196,13 @@ export async function createOrganizationWithOptionalAdmin(body) {
       };
     }
   } catch (e) {
+    if (org.logoStoragePath) {
+      try {
+        await clearClientLogo(org);
+      } catch {
+        /* ignore */
+      }
+    }
     await Organization.deleteOne({ _id: org._id });
     throw e;
   }
@@ -148,7 +215,9 @@ export async function createOrganizationWithOptionalAdmin(body) {
 }
 
 export async function listOrganizations() {
-  const rows = await Organization.find().sort({ createdAt: -1 }).lean();
+  const rows = await Organization.find({ subdomain: { $ne: 'master' } })
+    .sort({ createdAt: -1 })
+    .lean();
   return rows.map((o) => serializeOrganization(o));
 }
 
@@ -156,21 +225,31 @@ export async function getOrganizationById(id) {
   if (!mongoose.isValidObjectId(id)) throw new AppError('Invalid organization id', 400);
   const org = await Organization.findById(id).lean();
   if (!org) throw new AppError('Organization not found', 404);
-  return serializeOrganization(org);
+  const poc = await resolveOrganizationPoc(org);
+  return serializeOrganization(org, { poc });
 }
 
-export async function patchOrganizationById(id, body) {
+export async function patchOrganizationById(id, body, logoFile) {
   if (!mongoose.isValidObjectId(id)) throw new AppError('Invalid organization id', 400);
   const org = await Organization.findById(id);
   if (!org) throw new AppError('Organization not found', 404);
 
   if (body.name !== undefined) org.name = body.name;
   if (body.isActive !== undefined) org.isActive = body.isActive;
+  if (body.tagline !== undefined) {
+    org.tagline = body.tagline === null || body.tagline === '' ? undefined : body.tagline;
+  }
 
   const nextFeatures = resolveIncomingFeatures(body, normalizeOrgFeatures(org));
   if (nextFeatures) {
     org.features = nextFeatures;
     org.plan = planFromFeatures(nextFeatures);
+  }
+
+  if (body.clearLogo === true && !logoFile) {
+    await clearClientLogo(org);
+  } else if (logoFile) {
+    await replaceClientLogo(org, logoFile);
   }
 
   await org.save();

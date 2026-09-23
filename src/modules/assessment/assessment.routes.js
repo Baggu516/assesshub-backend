@@ -19,13 +19,20 @@ import {
   getOneAssessment,
   patchAssessment,
   postPublishAssessment,
+  postUnpublishAssessment,
+  deleteOneAssessment,
   postAssignAssessment,
   getAssessmentAssignees,
   getMyAssignments,
   getOneAssignment,
   postSubmitAssignment,
+  postFullscreenExit,
   getResults,
   getAssignmentSummary,
+  postReleaseResults,
+  postReattempt,
+  deleteResult,
+  postHideResult,
 } from './assessment.controller.js';
 
 const r = Router();
@@ -43,6 +50,11 @@ r.get(
   '/assignments/:assignmentId',
   requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW),
   getOneAssignment
+);
+r.post(
+  '/assignments/:assignmentId/fullscreen-exit',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT),
+  postFullscreenExit
 );
 r.post(
   '/assignments/:assignmentId/submit',
@@ -65,7 +77,9 @@ r.patch(
   requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
   patchAssessment
 );
+r.delete('/:id', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), deleteOneAssessment);
 r.post('/:id/publish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), postPublishAssessment);
+r.post('/:id/unpublish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), postUnpublishAssessment);
 r.post(
   '/:id/assign',
   validateBody(assignAssessmentSchema),
@@ -83,6 +97,26 @@ r.get(
   validateQuery(listResultsQuery),
   requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
   getAssignmentSummary
+);
+r.post(
+  '/:id/release-results',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  postReleaseResults
+);
+r.post(
+  '/:id/results/:assignmentId/reattempt',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  postReattempt
+);
+r.post(
+  '/:id/results/:assignmentId/hide',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  postHideResult
+);
+r.delete(
+  '/:id/results/:assignmentId',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  deleteResult
 );
 
 export default r;

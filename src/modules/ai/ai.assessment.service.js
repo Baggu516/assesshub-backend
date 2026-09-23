@@ -14,7 +14,7 @@ const draftSchema = z.object({
   questions: z.array(questionSchema).min(1).max(20),
 });
 
-const SYSTEM_PROMPT = `You create school assessment drafts for AssessHub.
+const SYSTEM_PROMPT = `You create school assessment drafts for ClassTrio.
 
 Return ONLY valid JSON (no markdown fences, no commentary) with this shape:
 {

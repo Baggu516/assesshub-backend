@@ -2,7 +2,8 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { hashPassword } from '../../utils/hash.js';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
-import { sendInvitationEmail } from '../../utils/mailer.js';
+import { sendInvitationEmail, sendWelcomeUserEmail } from '../../utils/mailer.js';
+import { allocateRegistrationId } from '../../utils/registrationId.js';
 import { Organization } from '../../models/Organization.js';
 import { listAssignableStudents, mapStudentClassesForTeacher } from '../shared/studentScope.service.js';
 
@@ -15,6 +16,46 @@ const DEFAULT_MEMBER_PERMS = [
   PERMISSION_KEYS.ASSESSMENT_VIEW,
   PERMISSION_KEYS.ASSESSMENT_SUBMIT,
 ];
+
+function loginWebsiteUrl(subdomain) {
+  const base = (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:5174')
+    .split(',')[0]
+    .trim()
+    .replace(/\/$/, '');
+  if (!subdomain) return base;
+  // Prefer query/path tenant if no wildcard DNS; frontend already uses school subdomain field
+  return `${base}/?tenant=${encodeURIComponent(subdomain)}`;
+}
+
+async function resolveOrgMeta(orgId) {
+  const org = await Organization.findById(orgId).lean();
+  return {
+    name: org?.name || 'our school',
+    subdomain: org?.subdomain || '',
+  };
+}
+
+async function sendWelcomeAfterCreate({
+  user,
+  orgId,
+  plainPassword,
+}) {
+  try {
+    const org = await resolveOrgMeta(orgId);
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    await sendWelcomeUserEmail({
+      to: user.email,
+      orgName: org.name,
+      studentName: name || undefined,
+      registrationId: user.registrationId,
+      email: user.email,
+      password: plainPassword || undefined,
+      loginUrl: loginWebsiteUrl(org.subdomain),
+    });
+  } catch (err) {
+    console.error('[mailer] Welcome email failed:', err?.message || err);
+  }
+}
 
 /** Admins without settings_manage may only grant keys they themselves hold. */
 function assertAssignablePermissionSubset(actor, keys) {
@@ -31,6 +72,7 @@ export function serializeUserDoc(u) {
   return {
     id: u._id,
     email: u.email,
+    registrationId: u.registrationId || null,
     firstName: u.firstName,
     lastName: u.lastName,
     hierarchyRole: u.hierarchyRole,
@@ -109,7 +151,17 @@ export async function listUsers(models, orgId, actor, { search, page = 1, limit 
     const escaped = searchTrim.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const rx = new RegExp(escaped, 'i');
     q = {
-      $and: [baseFilter, { $or: [{ email: rx }, { firstName: rx }, { lastName: rx }] }],
+      $and: [
+        baseFilter,
+        {
+          $or: [
+            { email: rx },
+            { firstName: rx },
+            { lastName: rx },
+            { registrationId: rx },
+          ],
+        },
+      ],
     };
   } else {
     q = baseFilter;
@@ -170,10 +222,13 @@ export async function createSubordinate(models, creator, orgId, body) {
   );
 
   const passwordHash = await hashPassword(body.password);
+  const org = await resolveOrgMeta(orgId);
+  const registrationId = await allocateRegistrationId(User, orgId, org.subdomain);
 
   const user = await User.create({
     orgId,
     email: body.email.toLowerCase(),
+    registrationId,
     passwordHash,
     firstName: body.firstName || '',
     lastName: body.lastName || '',
@@ -181,6 +236,12 @@ export async function createSubordinate(models, creator, orgId, body) {
     parentUserId: creator._id,
     roleId: subRole._id,
     permissions: body.permissions?.length ? body.permissions : DEFAULT_SUBORDINATE_PERMS,
+  });
+
+  await sendWelcomeAfterCreate({
+    user,
+    orgId,
+    plainPassword: body.password,
   });
 
   return serializeUserDoc(user.toObject());
@@ -234,12 +295,15 @@ export async function createMember(models, creator, orgId, body) {
 
   const password = body.password || crypto.randomBytes(12).toString('base64url');
   const passwordHash = await hashPassword(password);
+  const org = await resolveOrgMeta(orgId);
+  const registrationId = await allocateRegistrationId(User, orgId, org.subdomain);
 
   const memberPermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
 
   const user = await User.create({
     orgId,
     email: body.email.toLowerCase(),
+    registrationId,
     passwordHash,
     firstName: body.firstName || '',
     lastName: body.lastName || '',
@@ -249,7 +313,16 @@ export async function createMember(models, creator, orgId, body) {
     permissions: memberPermissions,
   });
 
-  return { user: serializeUserDoc(user.toObject()), generatedPassword: body.password ? undefined : password };
+  await sendWelcomeAfterCreate({
+    user,
+    orgId,
+    plainPassword: password,
+  });
+
+  return {
+    user: serializeUserDoc(user.toObject()),
+    generatedPassword: body.password ? undefined : password,
+  };
 }
 
 export async function updateUser(models, actor, orgId, userId, body) {
@@ -384,10 +457,13 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
   const memRole = await Role.findOne({ orgId, hierarchy: 'user' });
 
   const invitePermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
+  const org = await Organization.findById(orgId);
+  const registrationId = await allocateRegistrationId(User, orgId, org?.subdomain);
 
   const user = await User.create({
     orgId,
     email: body.email.toLowerCase(),
+    registrationId,
     passwordHash: await hashPassword(crypto.randomBytes(16).toString('hex')),
     firstName: body.firstName || '',
     lastName: body.lastName || '',
@@ -399,7 +475,6 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
     inviteExpiresAt,
   });
 
-  const org = await Organization.findById(orgId);
   const base = appUrl || process.env.FRONTEND_URL || 'http://localhost:5173';
   const inviteLink = `${base}/accept-invite?token=${token}&tenant=${org?.subdomain}`;
 
@@ -410,5 +485,20 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
     inviterName: `${actor.firstName} ${actor.lastName}`.trim() || actor.email,
   });
 
-  return { ok: true, userId: user._id };
+  // Also send welcome with registration ID (invite still sets password via accept-invite)
+  try {
+    const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    await sendWelcomeUserEmail({
+      to: user.email,
+      orgName: org?.name || 'our school',
+      studentName: name || undefined,
+      registrationId: user.registrationId,
+      email: user.email,
+      loginUrl: loginWebsiteUrl(org?.subdomain),
+    });
+  } catch (err) {
+    console.error('[mailer] Welcome email failed:', err?.message || err);
+  }
+
+  return { ok: true, userId: user._id, registrationId: user.registrationId };
 }

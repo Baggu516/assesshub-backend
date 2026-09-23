@@ -17,6 +17,7 @@ import { classMemberSchema } from '../models/ClassMember.js';
 import { academicYearSchema } from '../models/AcademicYear.js';
 import { classMasterSchema } from '../models/ClassMaster.js';
 import { enrollmentSchema } from '../models/Enrollment.js';
+import { learningResourceSchema } from '../models/LearningResource.js';
 
 const cacheByDbName = new Map();
 
@@ -72,6 +73,8 @@ export function getTenantModels(subdomain) {
     AcademicYear: conn.models.AcademicYear || conn.model('AcademicYear', academicYearSchema),
     ClassMaster: conn.models.ClassMaster || conn.model('ClassMaster', classMasterSchema),
     Enrollment: conn.models.Enrollment || conn.model('Enrollment', enrollmentSchema),
+    LearningResource:
+      conn.models.LearningResource || conn.model('LearningResource', learningResourceSchema),
   };
 
   cacheByDbName.set(dbName, models);

@@ -4,6 +4,8 @@ import { ensureTenantCatalog } from '../../db/tenantCatalog.js';
 import { hashPassword, comparePassword, hashToken } from '../../utils/hash.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
 import { ALL_PERMISSION_KEYS } from '../../constants/permissions.js';
+import { allocateRegistrationId, ensureUserRegistrationId } from '../../utils/registrationId.js';
+import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
 
 /** Stores refresh token and returns the same token payload shape as login. */
 export async function issueTenantSession(models, populatedUser, subdomain) {
@@ -43,6 +45,7 @@ export function sanitizeUser(user) {
   return {
     id: user._id,
     email: user.email,
+    registrationId: user.registrationId || null,
     firstName: user.firstName,
     lastName: user.lastName,
     hierarchyRole: user.hierarchyRole,
@@ -78,10 +81,12 @@ export async function provisionOrganizationAdmin(org, { adminEmail, adminPasswor
   );
 
   const passwordHash = await hashPassword(adminPassword);
+  const registrationId = await allocateRegistrationId(User, org._id, subdomain);
 
   const admin = await User.create({
     orgId: org._id,
     email: adminEmail.toLowerCase(),
+    registrationId,
     passwordHash,
     firstName: firstName || '',
     lastName: lastName || '',
@@ -95,7 +100,13 @@ export async function provisionOrganizationAdmin(org, { adminEmail, adminPasswor
 }
 
 export async function registerOrganization(payload) {
-  const exists = await Organization.findOne({ subdomain: payload.subdomain.toLowerCase() });
+  const sub = payload.subdomain.toLowerCase();
+  if (isReservedSubdomain(sub)) {
+    const err = new Error('This subdomain is reserved');
+    err.status = 400;
+    throw err;
+  }
+  const exists = await Organization.findOne({ subdomain: sub });
   if (exists) {
     const err = new Error('Subdomain already taken');
     err.status = 409;
@@ -104,7 +115,7 @@ export async function registerOrganization(payload) {
 
   const org = await Organization.create({
     name: payload.organizationName,
-    subdomain: payload.subdomain.toLowerCase(),
+    subdomain: sub,
   });
 
   const admin = await provisionOrganizationAdmin(org, {
@@ -124,12 +135,24 @@ export async function registerOrganization(payload) {
   };
 }
 
-export async function login({ email, password, orgId }, req) {
+export async function login({ email, identifier, password, orgId }, req) {
   const models = req.tenantModels;
   const { User } = models;
   const subdomain = req.tenant.subdomain;
 
-  const user = await User.findOne({ orgId, email: email.toLowerCase() }).select('+passwordHash');
+  const raw = String(identifier || email || '').trim();
+  if (!raw) {
+    const err = new Error('Email or registration ID is required');
+    err.status = 400;
+    throw err;
+  }
+
+  const looksLikeEmail = raw.includes('@');
+  const user = await User.findOne(
+    looksLikeEmail
+      ? { orgId, email: raw.toLowerCase() }
+      : { orgId, registrationId: raw.toUpperCase().replace(/\s+/g, '') }
+  ).select('+passwordHash');
 
   if (!user || !user.passwordHash) {
     const err = new Error('Invalid credentials');
@@ -148,6 +171,13 @@ export async function login({ email, password, orgId }, req) {
     const err = new Error('Account disabled');
     err.status = 403;
     throw err;
+  }
+
+  // Backfill registration ID for older accounts
+  try {
+    await ensureUserRegistrationId(user, User, subdomain);
+  } catch (err) {
+    console.error('[registrationId] backfill failed:', err?.message || err);
   }
 
   user.lastLoginAt = new Date();

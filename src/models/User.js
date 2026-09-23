@@ -4,6 +4,8 @@ export const userSchema = new mongoose.Schema(
   {
     orgId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true, index: true },
     email: { type: String, required: true, lowercase: true, trim: true },
+    /** School registration ID: DOMAIN + 5 digits, uppercase (e.g. VISWAM48291) */
+    registrationId: { type: String, uppercase: true, trim: true, default: null },
     passwordHash: { type: String, select: false },
     firstName: { type: String, trim: true, default: '' },
     lastName: { type: String, trim: true, default: '' },
@@ -26,4 +28,8 @@ export const userSchema = new mongoose.Schema(
 );
 
 userSchema.index({ orgId: 1, email: 1 }, { unique: true });
+userSchema.index(
+  { orgId: 1, registrationId: 1 },
+  { unique: true, partialFilterExpression: { registrationId: { $type: 'string' } } }
+);
 userSchema.index({ orgId: 1, parentUserId: 1 });

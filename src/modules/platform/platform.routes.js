@@ -10,6 +10,7 @@ import {
   listOrganizations,
   getOrganization,
   patchOrganization,
+  normalizeOrgFormBody,
 } from './platform.controller.js';
 import {
   createPlatformUser,
@@ -25,8 +26,14 @@ import {
   createPlatformUserSchema,
   patchPlatformUserSchema,
 } from './platform.schemas.js';
+import { logoUpload } from './logo.upload.js';
 
 const r = Router();
+
+function parseOrgMultipart(req, _res, next) {
+  req.body = normalizeOrgFormBody(req.body || {});
+  next();
+}
 
 r.post('/login', authLimiter, validateBody(loginPlatformSchema), loginPlatform);
 
@@ -39,9 +46,22 @@ r.post('/users', validateBody(createPlatformUserSchema), createPlatformUser);
 r.get('/users/:id', getPlatformUser);
 r.patch('/users/:id', validateBody(patchPlatformUserSchema), patchPlatformUser);
 r.delete('/users/:id', deletePlatformUser);
-r.post('/organizations', validateBody(createOrganizationSchema), createOrganization);
+
+r.post(
+  '/organizations',
+  logoUpload.single('logo'),
+  parseOrgMultipart,
+  validateBody(createOrganizationSchema),
+  createOrganization
+);
 r.get('/organizations', listOrganizations);
 r.get('/organizations/:id', getOrganization);
-r.patch('/organizations/:id', validateBody(patchOrganizationSchema), patchOrganization);
+r.patch(
+  '/organizations/:id',
+  logoUpload.single('logo'),
+  parseOrgMultipart,
+  validateBody(patchOrganizationSchema),
+  patchOrganization
+);
 
 export default r;

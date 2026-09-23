@@ -17,6 +17,7 @@ export const loginUser = asyncHandler(async (req, res) => {
   const tokens = await login(
     {
       email: req.body.email,
+      identifier: req.body.identifier,
       password: req.body.password,
       orgId,
     },

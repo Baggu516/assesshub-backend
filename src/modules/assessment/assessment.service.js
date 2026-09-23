@@ -6,8 +6,46 @@ import {
   resolveGroupsForAssign,
   listStudentGroups,
 } from '../student-group/student-group.service.js';
+import {
+  areAttemptResultsVisible,
+  countPendingReleaseAttempts,
+  pendingReleaseAttempts,
+} from '../../utils/resultsRelease.js';
+import { sendAssessmentResultsReleasedEmail } from '../../utils/mailer.js';
+import { Organization } from '../../models/Organization.js';
+import { normalizeOrgFeatures } from '../../middleware/plan.middleware.js';
 
 const ACTIVE = { deletedAt: null };
+export const MAX_FULLSCREEN_EXITS = 3;
+
+/** Documents created before `kind` existed are the CBT flow, now called online exams. */
+export function storedExamKind(doc) {
+  return doc?.kind === 'assessment' ? 'assessment' : 'online_exam';
+}
+
+async function loadOrgFeatures(orgId) {
+  const org = await Organization.findById(orgId).select('features plan subdomain').lean();
+  return normalizeOrgFeatures(org);
+}
+
+async function assertExamKindAllowed(orgId, kind) {
+  const features = await loadOrgFeatures(orgId);
+  const allowed = kind === 'assessment' ? features.assessments : features.onlineExams;
+  if (!allowed) {
+    const err = new Error(
+      kind === 'assessment'
+        ? 'Assessments are not included in this organization plan.'
+        : 'Online exams are not included in this organization plan.'
+    );
+    err.status = 403;
+    throw err;
+  }
+}
+
+function kindMongoFilter(kind) {
+  if (kind === 'assessment') return { kind: 'assessment' };
+  return { $or: [{ kind: 'online_exam' }, { kind: { $exists: false } }, { kind: null }] };
+}
 
 function orgOid(orgId) {
   return new mongoose.Types.ObjectId(String(orgId));
@@ -20,6 +58,8 @@ function serializeQuestion(q, { includeAnswers = true } = {}) {
     prompt: q.prompt,
     points: q.points,
     order: q.order,
+    section: q.section || 'Section A',
+    explanation: q.explanation || '',
     options: (q.options || []).map((o) => ({
       id: String(o._id),
       text: o.text,
@@ -38,7 +78,17 @@ function serializeAssessment(doc, opts = {}) {
     id: String(doc._id),
     title: doc.title,
     description: doc.description || '',
+    durationMinutes: doc.durationMinutes ?? 60,
+    startAt: doc.startAt || null,
+    endAt: doc.endAt || null,
+    negativeMarkPerWrong: doc.negativeMarkPerWrong ?? 0,
+    allowPartialCredit: doc.allowPartialCredit !== false,
+    showAnswersAfterSubmit: doc.showAnswersAfterSubmit !== false,
+    sections: Array.isArray(doc.sections) && doc.sections.length ? doc.sections : ['Section A'],
+    kind: storedExamKind(doc),
     status: doc.status,
+    resultsReleased: Boolean(doc.resultsReleased),
+    resultsReleasedAt: doc.resultsReleasedAt || null,
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
     questions: (doc.questions || [])
       .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
@@ -57,7 +107,13 @@ function serializeAssignment(doc, extras = {}) {
     academicYearId: doc.academicYearId ? String(doc.academicYearId) : null,
     dueDate: doc.dueDate,
     status: doc.status,
+    startedAt: doc.startedAt || null,
+    expiresAt: doc.expiresAt || null,
+    submitReason: doc.submitReason || null,
+    fullscreenExitCount: doc.fullscreenExitCount || 0,
+    maxFullscreenExits: MAX_FULLSCREEN_EXITS,
     submittedAt: doc.submittedAt,
+    resultsHidden: Boolean(doc.resultsHidden),
     score: doc.score,
     maxScore: doc.maxScore,
     answers: doc.answers || [],
@@ -143,36 +199,71 @@ function normalizeShortAnswer(text, caseSensitive) {
   return trimmed.toLowerCase();
 }
 
-function gradeAnswer(question, answerInput) {
+function gradeAnswer(question, answerInput, assessment = {}) {
   const points = question.points ?? 1;
+  const negative = Number(assessment.negativeMarkPerWrong) || 0;
+  const allowPartial = assessment.allowPartialCredit !== false;
+
+  const hasResponse =
+    (answerInput.selectedOptionIds || []).length > 0 ||
+    String(answerInput.textAnswer || '').trim().length > 0;
 
   if (question.type === 'single_select') {
+    if (!hasResponse) return { isCorrect: false, pointsEarned: 0 };
     const correctId = (question.options || []).find((o) => o.isCorrect)?._id?.toString();
     const selected = answerInput.selectedOptionIds?.[0];
     const isCorrect = Boolean(correctId && selected && correctId === String(selected));
-    return { isCorrect, pointsEarned: isCorrect ? points : 0 };
+    if (isCorrect) return { isCorrect: true, pointsEarned: points };
+    return { isCorrect: false, pointsEarned: negative > 0 ? -Math.min(negative, points) : 0 };
   }
 
   if (question.type === 'multi_select') {
+    if (!hasResponse) return { isCorrect: false, pointsEarned: 0 };
     const correctIds = new Set(
       (question.options || []).filter((o) => o.isCorrect).map((o) => o._id.toString())
     );
     const selectedIds = new Set((answerInput.selectedOptionIds || []).map(String));
-    const isCorrect =
+    const isExact =
       correctIds.size === selectedIds.size && [...correctIds].every((id) => selectedIds.has(id));
-    return { isCorrect, pointsEarned: isCorrect ? points : 0 };
+    if (isExact) return { isCorrect: true, pointsEarned: points };
+
+    if (allowPartial && selectedIds.size > 0) {
+      const allPickedAreCorrect = [...selectedIds].every((id) => correctIds.has(id));
+      if (allPickedAreCorrect && correctIds.size > 0) {
+        const earned = (selectedIds.size / correctIds.size) * points;
+        return { isCorrect: false, pointsEarned: Math.round(earned * 100) / 100 };
+      }
+    }
+
+    return { isCorrect: false, pointsEarned: negative > 0 ? -Math.min(negative, points) : 0 };
   }
 
   if (question.type === 'short_answer') {
+    if (!hasResponse) return { isCorrect: false, pointsEarned: 0 };
     const normalized = normalizeShortAnswer(answerInput.textAnswer, question.caseSensitive);
     const accepted = (question.acceptedAnswers || []).map((a) =>
       normalizeShortAnswer(a, question.caseSensitive)
     );
     const isCorrect = accepted.includes(normalized);
-    return { isCorrect, pointsEarned: isCorrect ? points : 0 };
+    if (isCorrect) return { isCorrect: true, pointsEarned: points };
+    return { isCorrect: false, pointsEarned: negative > 0 ? -Math.min(negative, points) : 0 };
   }
 
   return { isCorrect: false, pointsEarned: 0 };
+}
+
+function mapQuestionInput(q, i, fallbackSection = 'Section A') {
+  return {
+    type: q.type,
+    prompt: q.prompt,
+    points: q.points ?? 1,
+    order: q.order ?? i,
+    section: (q.section || fallbackSection).trim() || fallbackSection,
+    explanation: q.explanation || '',
+    options: q.options || [],
+    acceptedAnswers: q.acceptedAnswers || [],
+    caseSensitive: q.caseSensitive ?? false,
+  };
 }
 
 /** Students a teacher (or admin) may assign assessments to. */
@@ -188,21 +279,33 @@ export async function createAssessment(models, actor, orgId, body, ip) {
   }
 
   const { Assessment } = models;
+  const sections =
+    Array.isArray(body.sections) && body.sections.length
+      ? body.sections.map((s) => String(s).trim()).filter(Boolean)
+      : ['Section A'];
+  const fallbackSection = sections[0] || 'Section A';
+
+  const kind = body.kind === 'assessment' ? 'assessment' : 'online_exam';
+  await assertExamKindAllowed(orgId, kind);
+
   const doc = await Assessment.create({
     orgId: orgOid(orgId),
+    kind,
     title: body.title,
     description: body.description || '',
+    durationMinutes:
+      body.durationMinutes === undefined || body.durationMinutes === null
+        ? 60
+        : Number(body.durationMinutes),
+    startAt: body.startAt ? new Date(body.startAt) : null,
+    endAt: body.endAt ? new Date(body.endAt) : null,
+    negativeMarkPerWrong: Number(body.negativeMarkPerWrong) || 0,
+    allowPartialCredit: body.allowPartialCredit !== false,
+    showAnswersAfterSubmit: body.showAnswersAfterSubmit !== false,
+    sections,
     status: 'draft',
     createdBy: actor._id,
-    questions: body.questions.map((q, i) => ({
-      type: q.type,
-      prompt: q.prompt,
-      points: q.points ?? 1,
-      order: q.order ?? i,
-      options: q.options || [],
-      acceptedAnswers: q.acceptedAnswers || [],
-      caseSensitive: q.caseSensitive ?? false,
-    })),
+    questions: body.questions.map((q, i) => mapQuestionInput(q, i, fallbackSection)),
   });
 
   await logActivity({
@@ -224,7 +327,10 @@ export async function listAssessments(models, actor, orgId, query) {
   const oid = orgOid(orgId);
   const { page = 1, limit = 20, status } = query;
 
-  const filter = { orgId: oid, ...ACTIVE };
+  const requestedKind = query.kind === 'assessment' ? 'assessment' : 'online_exam';
+  await assertExamKindAllowed(orgId, requestedKind);
+
+  const filter = { orgId: oid, ...ACTIVE, ...kindMongoFilter(requestedKind) };
   if (status) filter.status = status;
 
   if (canCreateAssessment(actor) && !isStudent(actor)) {
@@ -243,8 +349,38 @@ export async function listAssessments(models, actor, orgId, query) {
     Assessment.countDocuments(filter),
   ]);
 
+  const { AssessmentAssignment } = models;
+  const ids = items.map((a) => a._id);
+  const counts =
+    ids.length === 0
+      ? []
+      : await AssessmentAssignment.aggregate([
+          { $match: { orgId: oid, assessmentId: { $in: ids } } },
+          {
+            $group: {
+              _id: '$assessmentId',
+              assignmentCount: { $sum: 1 },
+              submittedCount: {
+                $sum: { $cond: [{ $eq: ['$status', 'submitted'] }, 1, 0] },
+              },
+            },
+          },
+        ]);
+  const countMap = new Map(counts.map((c) => [String(c._id), c]));
+
   return {
-    assessments: items.map((a) => serializeAssessment(a)),
+    assessments: items.map((a) => {
+      const stats = countMap.get(String(a._id));
+      const base = serializeAssessment(a);
+      const totalMarks = (a.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+      return {
+        ...base,
+        questionCount: (a.questions || []).length,
+        totalMarks,
+        assignmentCount: stats?.assignmentCount || 0,
+        submittedCount: stats?.submittedCount || 0,
+      };
+    }),
     total,
     page,
     limit,
@@ -259,6 +395,8 @@ export async function getAssessment(models, actor, orgId, assessmentId) {
     err.status = 404;
     throw err;
   }
+
+  await assertExamKindAllowed(orgId, storedExamKind(doc));
 
   const isOwner =
     canCreateAssessment(actor) &&
@@ -302,16 +440,25 @@ export async function updateAssessment(models, actor, orgId, assessmentId, body)
 
   if (body.title !== undefined) doc.title = body.title;
   if (body.description !== undefined) doc.description = body.description;
+  if (body.durationMinutes !== undefined) doc.durationMinutes = Number(body.durationMinutes);
+  if (body.startAt !== undefined) doc.startAt = body.startAt ? new Date(body.startAt) : null;
+  if (body.endAt !== undefined) doc.endAt = body.endAt ? new Date(body.endAt) : null;
+  if (body.negativeMarkPerWrong !== undefined) {
+    doc.negativeMarkPerWrong = Number(body.negativeMarkPerWrong) || 0;
+  }
+  if (body.allowPartialCredit !== undefined) doc.allowPartialCredit = !!body.allowPartialCredit;
+  if (body.showAnswersAfterSubmit !== undefined) {
+    doc.showAnswersAfterSubmit = !!body.showAnswersAfterSubmit;
+  }
+  if (body.sections !== undefined) {
+    doc.sections =
+      Array.isArray(body.sections) && body.sections.length
+        ? body.sections.map((s) => String(s).trim()).filter(Boolean)
+        : ['Section A'];
+  }
   if (body.questions !== undefined) {
-    doc.questions = body.questions.map((q, i) => ({
-      type: q.type,
-      prompt: q.prompt,
-      points: q.points ?? 1,
-      order: q.order ?? i,
-      options: q.options || [],
-      acceptedAnswers: q.acceptedAnswers || [],
-      caseSensitive: q.caseSensitive ?? false,
-    }));
+    const fallback = (doc.sections && doc.sections[0]) || 'Section A';
+    doc.questions = body.questions.map((q, i) => mapQuestionInput(q, i, fallback));
   }
 
   await doc.save();
@@ -350,6 +497,68 @@ export async function publishAssessment(models, actor, orgId, assessmentId) {
   return serializeAssessment(doc.toObject());
 }
 
+export async function unpublishAssessment(models, actor, orgId, assessmentId) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment } = models;
+  const doc = await Assessment.findOne({ _id: assessmentId, orgId: orgOid(orgId), ...ACTIVE });
+  if (!doc) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && doc.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  if (doc.status !== 'published') {
+    const err = new Error('Only published assessments can be unpublished');
+    err.status = 400;
+    throw err;
+  }
+
+  doc.status = 'draft';
+  doc.resultsReleased = false;
+  doc.resultsReleasedAt = null;
+  await doc.save();
+  return serializeAssessment(doc.toObject());
+}
+
+export async function deleteAssessment(models, actor, orgId, assessmentId) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+  const doc = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE });
+  if (!doc) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && doc.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  doc.deletedAt = new Date();
+  await doc.save();
+  await AssessmentAssignment.deleteMany({ orgId: oid, assessmentId: doc._id });
+  return { ok: true };
+}
+
 export async function assignAssessment(models, actor, orgId, assessmentId, body) {
   if (!canCreateAssessment(actor)) {
     const err = new Error('Missing permission: assessment_create');
@@ -367,8 +576,8 @@ export async function assignAssessment(models, actor, orgId, assessmentId, body)
     throw err;
   }
 
-  if (assessment.status !== 'published') {
-    const err = new Error('Only published assessments can be assigned');
+  if (assessment.status === 'closed') {
+    const err = new Error('Closed assessments cannot be assigned');
     err.status = 400;
     throw err;
   }
@@ -479,6 +688,17 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
         ? { orgId: oid, assignedBy: actor._id }
         : { orgId: oid, studentId: actor._id };
 
+  const features = await loadOrgFeatures(orgId);
+  const requestedKind =
+    query.kind === 'assessment' || query.kind === 'online_exam' ? query.kind : null;
+  if (requestedKind) await assertExamKindAllowed(orgId, requestedKind);
+  const allowedKinds = requestedKind
+    ? [requestedKind]
+    : [
+        ...(features.assessments ? ['assessment'] : []),
+        ...(features.onlineExams ? ['online_exam'] : []),
+      ];
+
   const filter = { ...baseFilter, ...yearFilter };
 
   const assignments = await AssessmentAssignment.find(filter).sort({ createdAt: -1 }).lean();
@@ -498,17 +718,57 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
 
   return {
     academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
-    assignments: assignments.map((a) => {
-      const assessment = assessmentMap.get(String(a.assessmentId));
-      const student = studentMap.get(String(a.studentId));
-      const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
-      return serializeAssignment(a, {
-        assessmentTitle: assessment?.title || 'Unknown',
-        assessmentStatus: assessment?.status,
-        studentLabel: student ? studentDisplayName(student) : 'Unknown',
-        academicYearLabel: ay?.label || null,
-      });
-    }),
+    assignments: assignments
+      .map((a) => {
+        const assessment = assessmentMap.get(String(a.assessmentId));
+        const student = studentMap.get(String(a.studentId));
+        const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
+        return {
+          assignment: a,
+          assessment,
+          student,
+          ay,
+        };
+      })
+      .filter(({ assessment }) => {
+        if (!assessment) return false;
+        if (!allowedKinds.includes(storedExamKind(assessment))) return false;
+        // Students only see published assessments; teachers see all they assigned
+        if (actor.hierarchyRole === 'user') return assessment.status === 'published';
+        return true;
+      })
+      .map(({ assignment: a, assessment, student, ay }) => {
+        const resultsVisible =
+          actor.hierarchyRole !== 'user' || areAttemptResultsVisible(assessment, a);
+        const questionCount = (assessment?.questions || []).length;
+        const totalMarks = (assessment?.questions || []).reduce(
+          (sum, q) => sum + (q.points ?? 1),
+          0
+        );
+        const base = serializeAssignment(a, {
+          assessmentTitle: assessment?.title || 'Unknown',
+          assessmentDescription: assessment?.description || '',
+          assessmentStatus: assessment?.status,
+          durationMinutes: assessment?.durationMinutes ?? 60,
+          startAt: assessment?.startAt || null,
+          endAt: assessment?.endAt || null,
+          questionCount,
+          totalMarks,
+          resultsReleased: Boolean(assessment?.resultsReleased),
+          resultsVisible,
+          studentLabel: student ? studentDisplayName(student) : 'Unknown',
+          academicYearLabel: ay?.label || null,
+        });
+        if (actor.hierarchyRole === 'user' && a.status === 'submitted' && !resultsVisible) {
+          return {
+            ...base,
+            score: null,
+            maxScore: a.maxScore,
+            answers: [],
+          };
+        }
+        return base;
+      }),
   };
 }
 
@@ -516,7 +776,7 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
   const { AssessmentAssignment, Assessment } = models;
   const oid = orgOid(orgId);
 
-  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid }).lean();
+  let assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid });
   if (!assignment) {
     const err = new Error('Assignment not found');
     err.status = 404;
@@ -546,8 +806,48 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
     throw err;
   }
 
-  const includeAnswers = isTeacher || assignment.status === 'submitted';
-  const serializedAssessment = serializeAssessment(assessment, { includeAnswers });
+  await assertExamKindAllowed(orgId, storedExamKind(assessment));
+
+  const durationMinutes = Number(assessment.durationMinutes ?? 60);
+
+  // Enforce assessment window before starting
+  if (isStudentOwner && assignment.status === 'pending' && !assignment.startedAt) {
+    const now = new Date();
+    if (assessment.startAt && new Date(assessment.startAt).getTime() > now.getTime()) {
+      const err = new Error('Assessment has not started yet');
+      err.status = 400;
+      throw err;
+    }
+    if (assessment.endAt && new Date(assessment.endAt).getTime() < now.getTime()) {
+      const err = new Error('Assessment window has ended');
+      err.status = 400;
+      throw err;
+    }
+    assignment.startedAt = now;
+    if (durationMinutes > 0) {
+      assignment.expiresAt = new Date(now.getTime() + durationMinutes * 60 * 1000);
+    }
+    await assignment.save();
+  }
+
+  // Auto-submit if timer already expired
+  if (
+    isStudentOwner &&
+    assignment.status === 'pending' &&
+    assignment.expiresAt &&
+    assignment.expiresAt.getTime() <= Date.now()
+  ) {
+    return submitAssignment(models, actor, orgId, assignmentId, {
+      answers: [],
+      submitReason: 'timer',
+    });
+  }
+
+  const resultsVisible =
+    isTeacher || areAttemptResultsVisible(assessment, assignment.toObject ? assignment.toObject() : assignment);
+  const serializedAssessment = serializeAssessment(assessment, {
+    includeAnswers: isTeacher || (assignment.status === 'submitted' && resultsVisible),
+  });
 
   if (isStudentOwner && assignment.status === 'pending') {
     for (const q of serializedAssessment.questions) {
@@ -556,9 +856,98 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
     }
   }
 
+  // Students don't see answer key until results are announced
+  if (isStudentOwner && assignment.status === 'submitted') {
+    const showKey = resultsVisible && assessment.showAnswersAfterSubmit !== false;
+    if (!showKey) {
+      for (const q of serializedAssessment.questions) {
+        delete q.acceptedAnswers;
+        delete q.caseSensitive;
+        if (q.options) {
+          q.options = q.options.map(({ id, text }) => ({ id, text }));
+        }
+      }
+    }
+  }
+
+  let remainingSeconds = null;
+  if (assignment.status === 'pending' && assignment.expiresAt) {
+    remainingSeconds = Math.max(
+      0,
+      Math.floor((new Date(assignment.expiresAt).getTime() - Date.now()) / 1000)
+    );
+  } else if (assignment.status === 'pending' && durationMinutes <= 0) {
+    remainingSeconds = null;
+  }
+
+  const assignmentPayload = serializeAssignment(
+    assignment.toObject ? assignment.toObject() : assignment,
+    {
+      remainingSeconds,
+      resultsVisible,
+      resultsReleased: Boolean(assessment.resultsReleased),
+    }
+  );
+
+  if (isStudentOwner && assignment.status === 'submitted' && !resultsVisible) {
+    assignmentPayload.score = null;
+    assignmentPayload.answers = [];
+  }
+
   return {
-    assignment: serializeAssignment(assignment),
+    assignment: assignmentPayload,
     assessment: serializedAssessment,
+  };
+}
+
+export async function recordFullscreenExit(models, actor, orgId, assignmentId) {
+  const { AssessmentAssignment, Assessment } = models;
+  const oid = orgOid(orgId);
+
+  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid });
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  if (assignment.studentId?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+  if (assignment.status === 'submitted') {
+    const err = new Error('You have already submitted this exam');
+    err.status = 409;
+    throw err;
+  }
+
+  const assessment = await Assessment.findOne({
+    _id: assignment.assessmentId,
+    orgId: oid,
+    status: 'published',
+    ...ACTIVE,
+  }).lean();
+  if (!assessment) {
+    const err = new Error('Assessment not available');
+    err.status = 400;
+    throw err;
+  }
+  if (storedExamKind(assessment) !== 'online_exam') {
+    const err = new Error('Fullscreen lock applies to online exams only');
+    err.status = 400;
+    throw err;
+  }
+  await assertExamKindAllowed(orgId, 'online_exam');
+
+  assignment.fullscreenExitCount = (assignment.fullscreenExitCount || 0) + 1;
+  await assignment.save();
+
+  const count = assignment.fullscreenExitCount;
+  return {
+    fullscreenExitCount: count,
+    maxFullscreenExits: MAX_FULLSCREEN_EXITS,
+    exitsRemaining: Math.max(0, MAX_FULLSCREEN_EXITS - count),
+    forceSubmit: count >= MAX_FULLSCREEN_EXITS,
   };
 }
 
@@ -604,25 +993,17 @@ export async function submitAssignment(models, actor, orgId, assignmentId, body)
     throw err;
   }
 
+  await assertExamKindAllowed(orgId, storedExamKind(assessment));
+
   const questionMap = new Map((assessment.questions || []).map((q) => [q._id.toString(), q]));
-  const answeredIds = new Set(body.answers.map((a) => String(a.questionId)));
+  const inputByQuestion = new Map((body.answers || []).map((a) => [String(a.questionId), a]));
 
-  for (const q of assessment.questions || []) {
-    if (!answeredIds.has(q._id.toString())) {
-      const err = new Error('All questions must be answered');
-      err.status = 400;
-      throw err;
-    }
-  }
-
-  let totalScore = 0;
-  const gradedAnswers = body.answers.map((input) => {
-    const question = questionMap.get(String(input.questionId));
-    if (!question) {
-      const err = new Error(`Invalid questionId: ${input.questionId}`);
-      err.status = 400;
-      throw err;
-    }
+  const gradedAnswers = (assessment.questions || []).map((question) => {
+    const input = inputByQuestion.get(question._id.toString()) || {
+      questionId: String(question._id),
+      selectedOptionIds: [],
+      textAnswer: '',
+    };
 
     if (question.type === 'short_answer') {
       const words = (input.textAnswer || '').trim().split(/\s+/).filter(Boolean);
@@ -633,12 +1014,13 @@ export async function submitAssignment(models, actor, orgId, assignmentId, body)
       }
     }
 
-    const { isCorrect, pointsEarned } = gradeAnswer(question, input);
-    totalScore += pointsEarned;
+    const { isCorrect, pointsEarned } = gradeAnswer(question, input, assessment);
 
     return {
       questionId: question._id,
-      selectedOptionIds: (input.selectedOptionIds || []).map((id) => new mongoose.Types.ObjectId(id)),
+      selectedOptionIds: (input.selectedOptionIds || [])
+        .filter(Boolean)
+        .map((id) => new mongoose.Types.ObjectId(id)),
       textAnswer: input.textAnswer || '',
       isCorrect,
       pointsEarned,
@@ -646,10 +1028,20 @@ export async function submitAssignment(models, actor, orgId, assignmentId, body)
   });
 
   assignment.answers = gradedAnswers;
-  assignment.score = totalScore;
+  assignment.score = Math.max(
+    0,
+    gradedAnswers.reduce((sum, a) => sum + (a.pointsEarned || 0), 0)
+  );
   assignment.maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
   assignment.status = 'submitted';
   assignment.submittedAt = new Date();
+  const allowedReasons = ['manual', 'timer', 'fullscreen_exits'];
+  let submitReason = allowedReasons.includes(body.submitReason) ? body.submitReason : 'manual';
+  if (submitReason === 'fullscreen_exits' && storedExamKind(assessment) !== 'online_exam') {
+    submitReason = 'manual';
+  }
+  assignment.submitReason = submitReason;
+  if (!assignment.startedAt) assignment.startedAt = new Date();
   await assignment.save();
 
   return {
@@ -704,19 +1096,330 @@ export async function getAssessmentResults(models, actor, orgId, assessmentId, q
     : [];
   const yearMap = new Map(years.map((y) => [String(y._id), y]));
 
-  return {
-    assessment: serializeAssessment(assessment),
-    academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
-    results: assignments.map((a) => {
-      const student = studentMap.get(String(a.studentId));
-      const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
-      return serializeAssignment(a, {
+  const questionCount = (assessment.questions || []).length;
+  const totalMarks = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+
+  const results = assignments.map((a) => {
+    const student = studentMap.get(String(a.studentId));
+    const ay = a.academicYearId ? yearMap.get(String(a.academicYearId)) : null;
+    const answers = a.answers || [];
+
+    let correctCount = 0;
+    let partialCount = 0;
+    let wrongCount = 0;
+    let unansweredCount = 0;
+
+    if (a.status === 'submitted') {
+      for (const q of assessment.questions || []) {
+        const ans = answers.find((x) => String(x.questionId) === String(q._id));
+        const points = q.points ?? 1;
+        const hasResponse =
+          ans &&
+          ((ans.selectedOptionIds || []).length > 0 || String(ans.textAnswer || '').trim().length > 0);
+        if (!hasResponse) {
+          unansweredCount += 1;
+          continue;
+        }
+        const earned = Number(ans.pointsEarned) || 0;
+        if (ans.isCorrect && earned >= points) correctCount += 1;
+        else if (earned > 0 && earned < points) partialCount += 1;
+        else if (ans.isCorrect) correctCount += 1;
+        else wrongCount += 1;
+      }
+    } else {
+      unansweredCount = questionCount;
+    }
+
+    const scoredMarks = a.status === 'submitted' ? Number(a.score) || 0 : 0;
+    const maxScore = a.maxScore || totalMarks;
+    const percentage = maxScore > 0 && a.status === 'submitted' ? (scoredMarks / maxScore) * 100 : 0;
+    const timeTakenSeconds =
+      a.startedAt && a.submittedAt
+        ? Math.max(0, Math.floor((new Date(a.submittedAt) - new Date(a.startedAt)) / 1000))
+        : null;
+
+    return {
+      ...serializeAssignment(a, {
         studentLabel: student ? studentDisplayName(student) : 'Unknown',
-        studentEmail: student?.email,
+        studentEmail: student?.email || '',
         academicYearLabel: ay?.label || null,
-      });
-    }),
+      }),
+      studentName: student ? studentDisplayName(student) : 'Unknown',
+      scoredMarks,
+      totalMarks: maxScore,
+      percentage,
+      correctCount: a.status === 'submitted' ? correctCount : 0,
+      partialCount: a.status === 'submitted' ? partialCount : 0,
+      wrongCount: a.status === 'submitted' ? wrongCount : 0,
+      unansweredCount,
+      timeTakenSeconds,
+      autoSubmitted: a.submitReason === 'timer',
+    };
+  });
+
+  const submitted = results.filter((r) => r.status === 'submitted');
+  const percentages = submitted.map((r) => r.percentage);
+  const averagePercentage =
+    percentages.length > 0 ? percentages.reduce((s, p) => s + p, 0) / percentages.length : 0;
+  const highestPercentage = percentages.length > 0 ? Math.max(...percentages) : 0;
+  const pendingReleaseCount = countPendingReleaseAttempts(assessment, assignments);
+
+  return {
+    assessment: {
+      ...serializeAssessment(assessment),
+      questionCount,
+      totalMarks,
+    },
+    academicYear: year ? { id: String(year._id), label: year.label, isCurrent: !!year.isCurrent } : null,
+    summary: {
+      assigned: results.length,
+      submitted: submitted.length,
+      pending: results.length - submitted.length,
+      averagePercentage,
+      highestPercentage,
+      pendingReleaseCount,
+    },
+    results,
   };
+}
+
+export async function releaseAssessmentResults(models, actor, orgId, assessmentId, appUrl) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment, User } = models;
+  const oid = orgOid(orgId);
+
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE });
+  if (!assessment) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const assignments = await AssessmentAssignment.find({
+    orgId: oid,
+    assessmentId: assessment._id,
+    status: 'submitted',
+  }).lean();
+
+  const toNotify = pendingReleaseAttempts(assessment.toObject(), assignments);
+  if (toNotify.length === 0) {
+    const err = new Error(
+      assignments.length === 0
+        ? 'No submitted attempts to announce yet.'
+        : 'All submitted results are already announced. The button unlocks when a new attempt is submitted.'
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const wasReleased = Boolean(assessment.resultsReleased);
+  assessment.resultsReleased = true;
+  assessment.resultsReleasedAt = new Date();
+  await assessment.save();
+
+  const studentIds = toNotify.map((a) => a.studentId);
+  const students = await User.find({ _id: { $in: studentIds } }).lean();
+  const studentMap = new Map(students.map((s) => [String(s._id), s]));
+
+  const base = (appUrl || process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:5174')
+    .split(',')[0]
+    .trim()
+    .replace(/\/$/, '');
+
+  let emailed = 0;
+  let skipped = 0;
+  let failed = 0;
+
+  for (const attempt of toNotify) {
+    const student = studentMap.get(String(attempt.studentId));
+    if (!student?.email || student.isActive === false) {
+      skipped += 1;
+      continue;
+    }
+
+    try {
+      const outcome = await sendAssessmentResultsReleasedEmail({
+        to: student.email,
+        studentName: studentDisplayName(student),
+        assessmentTitle: assessment.title,
+        resultUrl: `${base}/my-assessments/${attempt._id}`,
+      });
+      if (outcome.sent) emailed += 1;
+      else skipped += 1;
+    } catch (err) {
+      failed += 1;
+      console.error(`[mailer] Failed to email ${student.email}:`, err?.message || err);
+    }
+  }
+
+  return {
+    message: wasReleased
+      ? 'New results announced for late submissions. Students can now view those scores.'
+      : 'Results released. Students can now view scores on the site.',
+    assessment: serializeAssessment(assessment.toObject()),
+    notify: {
+      recipients: toNotify.length,
+      emailed,
+      skipped,
+      failed,
+    },
+    summary: {
+      pendingReleaseCount: 0,
+    },
+  };
+}
+
+export async function reattemptAssignment(models, actor, orgId, assessmentId, assignmentId) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE });
+  if (!assessment) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const assignment = await AssessmentAssignment.findOne({
+    _id: assignmentId,
+    orgId: oid,
+    assessmentId,
+  });
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  assignment.status = 'pending';
+  assignment.answers = [];
+  assignment.score = 0;
+  assignment.maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+  assignment.startedAt = null;
+  assignment.expiresAt = null;
+  assignment.submittedAt = null;
+  assignment.submitReason = undefined;
+  assignment.fullscreenExitCount = 0;
+  assignment.resultsHidden = false;
+  await assignment.save();
+
+  return { ok: true, assignment: serializeAssignment(assignment.toObject()) };
+}
+
+export async function setAssignmentResultsHidden(
+  models,
+  actor,
+  orgId,
+  assessmentId,
+  assignmentId,
+  hidden
+) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE });
+  if (!assessment) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const assignment = await AssessmentAssignment.findOne({
+    _id: assignmentId,
+    orgId: oid,
+    assessmentId,
+  });
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  if (assignment.status !== 'submitted') {
+    const err = new Error('Only a submitted attempt can be hidden');
+    err.status = 400;
+    throw err;
+  }
+
+  assignment.resultsHidden = Boolean(hidden);
+  await assignment.save();
+
+  return {
+    ok: true,
+    resultsHidden: assignment.resultsHidden,
+    assignment: serializeAssignment(assignment.toObject()),
+  };
+}
+
+export async function deleteAssignmentResult(models, actor, orgId, assessmentId, assignmentId) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, ...ACTIVE });
+  if (!assessment) {
+    const err = new Error('Assessment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const result = await AssessmentAssignment.deleteOne({
+    _id: assignmentId,
+    orgId: oid,
+    assessmentId,
+  });
+  if (!result.deletedCount) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+
+  return { ok: true };
 }
 
 /** Summary of who an assessment is already assigned to (for Assign modal reopen). */

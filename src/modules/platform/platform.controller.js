@@ -8,6 +8,32 @@ import {
   patchOrganizationById,
 } from './platform.service.js';
 
+/** Coerce multipart text fields into typed body for Zod. */
+export function normalizeOrgFormBody(raw = {}) {
+  const body = { ...raw };
+
+  if (typeof body.isActive === 'string') {
+    body.isActive = body.isActive === 'true' || body.isActive === '1';
+  }
+  if (typeof body.clearLogo === 'string') {
+    body.clearLogo = body.clearLogo === 'true' || body.clearLogo === '1';
+  }
+  if (typeof body.features === 'string' && body.features.trim()) {
+    try {
+      body.features = JSON.parse(body.features);
+    } catch {
+      /* leave as-is; zod will fail */
+    }
+  }
+  if (body.tagline === '') body.tagline = undefined;
+  if (body.adminEmail === '') body.adminEmail = undefined;
+  if (body.adminPassword === '') body.adminPassword = undefined;
+  if (body.firstName === '') body.firstName = undefined;
+  if (body.lastName === '') body.lastName = undefined;
+
+  return body;
+}
+
 export const loginPlatform = asyncHandler(async (req, res) => {
   const session = await authenticatePlatformLogin(req.body.email, req.body.password);
   res.json(session);
@@ -22,7 +48,7 @@ export const getPlatformStats = asyncHandler(async (_req, res) => {
 });
 
 export const createOrganization = asyncHandler(async (req, res) => {
-  const result = await createOrganizationWithOptionalAdmin(req.body);
+  const result = await createOrganizationWithOptionalAdmin(req.body, req.file);
   res.status(201).json(result);
 });
 
@@ -35,5 +61,5 @@ export const getOrganization = asyncHandler(async (req, res) => {
 });
 
 export const patchOrganization = asyncHandler(async (req, res) => {
-  res.json({ organization: await patchOrganizationById(req.params.id, req.body) });
+  res.json({ organization: await patchOrganizationById(req.params.id, req.body, req.file) });
 });

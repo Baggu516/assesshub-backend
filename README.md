@@ -1,4 +1,4 @@
-# AssessHub API
+# ClassTrio API
 
 Multi-tenant assessment platform backend (Express + MongoDB).
 
@@ -16,7 +16,6 @@ src/
   modules/            # Feature modules (routes → controller → service)
   routes/             # /api aggregator
   utils/              # Pure helpers (jwt, errors, mailer, …)
-scripts/              # CLI / ops (seed, free-port)
 ```
 
 ## Tenancy
@@ -41,7 +40,6 @@ Each feature under `src/modules/<name>/` typically has:
 ```bash
 cp .env.example .env   # fill required secrets
 npm install
-npm run seed           # optional demo org
 npm run dev
 ```
 
