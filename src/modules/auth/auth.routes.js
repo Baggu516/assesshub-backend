@@ -6,17 +6,28 @@ import {
   logoutUser,
   me,
   acceptInviteHandler,
+  forgotPassword,
+  resetPassword,
 } from './auth.controller.js';
-import { registerOrgSchema, loginSchema, refreshSchema, acceptInviteSchema } from './auth.schemas.js';
+import {
+  registerOrgSchema,
+  loginSchema,
+  refreshSchema,
+  acceptInviteSchema,
+  forgotPasswordSchema,
+  resetPasswordSchema,
+} from './auth.schemas.js';
 import { validateBody } from '../../middleware/validate.middleware.js';
 import { tenantMiddleware } from '../../middleware/tenant.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
-import { authLimiter } from '../../middleware/rateLimit.middleware.js';
+import { authLimiter, forgotLimiter } from '../../middleware/rateLimit.middleware.js';
 
 const r = Router();
 
 r.post('/register-org', authLimiter, validateBody(registerOrgSchema), registerOrg);
 r.post('/login', authLimiter, tenantMiddleware, validateBody(loginSchema), loginUser);
+r.post('/forgot-password', forgotLimiter, tenantMiddleware, validateBody(forgotPasswordSchema), forgotPassword);
+r.post('/reset-password', forgotLimiter, tenantMiddleware, validateBody(resetPasswordSchema), resetPassword);
 r.post('/refresh', authLimiter, validateBody(refreshSchema), refresh);
 r.post('/logout', authLimiter, validateBody(refreshSchema), logoutUser);
 r.post(

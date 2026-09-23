@@ -6,6 +6,8 @@ import {
   logout,
   sanitizeUser,
   acceptInvite,
+  requestPasswordOtp,
+  resetPasswordWithOtp,
 } from './auth.service.js';
 export const registerOrg = asyncHandler(async (req, res) => {
   const result = await registerOrganization(req.body);
@@ -39,6 +41,27 @@ export const logoutUser = asyncHandler(async (req, res) => {
 export const me = asyncHandler(async (req, res) => {
   const user = await req.tenantModels.User.findById(req.user._id).populate('roleId').lean();
   res.json({ user: sanitizeUser(user) });
+});
+
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const result = await requestPasswordOtp(
+    { identifier: req.body.identifier, orgId: req.tenant.orgId },
+    req
+  );
+  res.json(result);
+});
+
+export const resetPassword = asyncHandler(async (req, res) => {
+  const result = await resetPasswordWithOtp(
+    {
+      identifier: req.body.identifier,
+      otp: req.body.otp,
+      password: req.body.password,
+      orgId: req.tenant.orgId,
+    },
+    req
+  );
+  res.json(result);
 });
 
 export const acceptInviteHandler = asyncHandler(async (req, res) => {

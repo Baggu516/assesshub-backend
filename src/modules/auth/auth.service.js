@@ -1,7 +1,9 @@
 import { Organization } from '../../models/Organization.js';
 import { getTenantModels } from '../../db/tenantModels.js';
 import { ensureTenantCatalog } from '../../db/tenantCatalog.js';
+import crypto from 'crypto';
 import { hashPassword, comparePassword, hashToken } from '../../utils/hash.js';
+import { sendPasswordResetOtp } from '../../utils/mailer.js';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt.js';
 import { ALL_PERMISSION_KEYS } from '../../constants/permissions.js';
 import { allocateRegistrationId, ensureUserRegistrationId } from '../../utils/registrationId.js';
@@ -140,19 +142,14 @@ export async function login({ email, identifier, password, orgId }, req) {
   const { User } = models;
   const subdomain = req.tenant.subdomain;
 
-  const raw = String(identifier || email || '').trim();
-  if (!raw) {
+  const query = identifierFilter(orgId, identifier || email);
+  if (!query) {
     const err = new Error('Email or registration ID is required');
     err.status = 400;
     throw err;
   }
 
-  const looksLikeEmail = raw.includes('@');
-  const user = await User.findOne(
-    looksLikeEmail
-      ? { orgId, email: raw.toLowerCase() }
-      : { orgId, registrationId: raw.toUpperCase().replace(/\s+/g, '') }
-  ).select('+passwordHash');
+  const user = await User.findOne(query).select('+passwordHash');
 
   if (!user || !user.passwordHash) {
     const err = new Error('Invalid credentials');
@@ -341,4 +338,89 @@ export async function acceptInvite({ token, password, orgId }, models) {
   });
 
   return buildTokenResponse(populated, refreshPlain, subdomain);
+}
+
+function identifierFilter(orgId, raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (value.includes('@')) return { orgId, email: value.toLowerCase() };
+  return { orgId, registrationId: value.toUpperCase().replace(/\s+/g, '') };
+}
+
+function maskEmail(email) {
+  const [name, domain] = String(email || '').split('@');
+  if (!domain) return '';
+  return `${name.slice(0, 1)}***@${domain}`;
+}
+
+function otpMatches(plain, hash) {
+  const digest = hashToken(String(plain || '').trim());
+  const a = Buffer.from(digest);
+  const b = Buffer.from(String(hash || ''));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+export async function requestPasswordOtp({ identifier, orgId }, req) {
+  const { User } = req.tenantModels;
+  const query = identifierFilter(orgId, identifier);
+  if (!query) return { ok: true };
+
+  const user = await User.findOne(query).select('+passwordHash +passwordResetOtpHash');
+  if (!user || !user.isActive || !user.email || !user.passwordHash) return { ok: true };
+
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, '0');
+  user.passwordResetOtpHash = hashToken(code);
+  user.passwordResetOtpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  user.passwordResetOtpAttempts = 0;
+  await user.save();
+
+  const orgName = req.tenant?.organization?.name || req.tenant?.subdomain;
+  const delivery = await sendPasswordResetOtp({ to: user.email, orgName, code });
+  if (!delivery.sent && process.env.NODE_ENV === 'production') {
+    const err = new Error('Could not send the email. Try again in a moment.');
+    err.status = 503;
+    throw err;
+  }
+
+  return { ok: true, hint: maskEmail(user.email) };
+}
+
+export async function resetPasswordWithOtp({ identifier, otp, password, orgId }, req) {
+  const { User, RefreshToken } = req.tenantModels;
+  const query = identifierFilter(orgId, identifier);
+  const user = query
+    ? await User.findOne(query).select('+passwordResetOtpHash +passwordHash')
+    : null;
+
+  const invalid = () => {
+    const err = new Error('That code is invalid or expired');
+    err.status = 400;
+    return err;
+  };
+
+  if (!user?.passwordResetOtpHash || !user.passwordResetOtpExpiresAt) throw invalid();
+
+  if (user.passwordResetOtpExpiresAt.getTime() < Date.now() || (user.passwordResetOtpAttempts || 0) >= 5) {
+    user.passwordResetOtpHash = null;
+    user.passwordResetOtpExpiresAt = null;
+    user.passwordResetOtpAttempts = 0;
+    await user.save();
+    throw invalid();
+  }
+
+  if (!otpMatches(otp, user.passwordResetOtpHash)) {
+    user.passwordResetOtpAttempts = (user.passwordResetOtpAttempts || 0) + 1;
+    await user.save();
+    throw invalid();
+  }
+
+  user.passwordHash = await hashPassword(password);
+  user.passwordResetOtpHash = null;
+  user.passwordResetOtpExpiresAt = null;
+  user.passwordResetOtpAttempts = 0;
+  await user.save();
+
+  await RefreshToken.updateMany({ userId: user._id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  return { ok: true };
 }

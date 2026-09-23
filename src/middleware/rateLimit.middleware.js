@@ -14,6 +14,14 @@ export const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+export const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many reset attempts. Try again in a few minutes.' },
+});
+
 /** AI proxy: tighter cap, keyed by user after auth. */
 export const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

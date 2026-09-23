@@ -22,6 +22,9 @@ export const userSchema = new mongoose.Schema(
     isActive: { type: Boolean, default: true },
     inviteToken: { type: String, select: false },
     inviteExpiresAt: { type: Date },
+    passwordResetOtpHash: { type: String, select: false, default: null },
+    passwordResetOtpExpiresAt: { type: Date, default: null },
+    passwordResetOtpAttempts: { type: Number, default: 0 },
     lastLoginAt: { type: Date },
   },
   { timestamps: true }

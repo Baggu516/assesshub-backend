@@ -31,3 +31,13 @@ export const acceptInviteSchema = z.object({
   token: z.string().min(10),
   password: z.string().min(8).max(128),
 });
+
+export const forgotPasswordSchema = z.object({
+  identifier: z.string().trim().min(1).max(254),
+});
+
+export const resetPasswordSchema = z.object({
+  identifier: z.string().trim().min(1).max(254),
+  otp: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code'),
+  password: z.string().min(8).max(128),
+});

@@ -134,6 +134,43 @@ export async function sendWelcomeUserEmail({
   return { sent: true };
 }
 
+export async function sendPasswordResetOtp({ to, orgName, code }) {
+  const transport = getTransporter();
+  const safeOrg = orgName || 'your school';
+  const subject = `Your ${safeOrg} sign-in code`;
+  const text = [
+    `Your ClassTrio code is ${code}.`,
+    '',
+    'It expires in 10 minutes. If you did not ask to reset your password, you can ignore this email.',
+    '',
+    '— ClassTrio',
+  ].join('\n');
+  const html = `
+    <div style="font-family: system-ui, sans-serif; line-height: 1.5; color: #111;">
+      <p style="margin: 0 0 12px;">Your code for <strong>${escapeHtml(safeOrg)}</strong> is</p>
+      <p style="margin: 0 0 16px; font-size: 28px; letter-spacing: 0.2em; font-weight: 700;">${escapeHtml(code)}</p>
+      <p style="margin: 0 0 16px; color: #555;">It expires in 10 minutes. If you did not ask to reset your password, you can ignore this email.</p>
+      <p style="margin: 0; color: #888; font-size: 12px;">— ClassTrio</p>
+    </div>
+  `;
+
+  if (!transport) {
+    if (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test') {
+      console.info('[mail:stub] password reset code', { to, code });
+    }
+    return { sent: false, skipped: true };
+  }
+
+  await transport.sendMail({
+    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    text,
+    html,
+  });
+  return { sent: true };
+}
+
 /**
  * Notify a student that assessment results are available on the site.
  * Does not include scores — they must log in to view results.
