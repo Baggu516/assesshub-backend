@@ -69,6 +69,10 @@ function getClient() {
         secretAccessKey: env('S3_SECRET_ACCESS_KEY'),
       },
       forcePathStyle,
+      // AWS SDK v3.729+ adds CRC32 checksums to every upload. Supabase Storage
+      // rejects those and replies with non-XML, which the SDK reports as a parse error.
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
   return client;
