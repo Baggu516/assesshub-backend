@@ -13,6 +13,7 @@ import {
 } from '../../utils/resultsRelease.js';
 import { sendAssessmentResultsReleasedEmail } from '../../utils/mailer.js';
 import { Organization } from '../../models/Organization.js';
+import { deleteS3Object, downloadS3ToBuffer, s3Configured, uploadBufferToS3 } from '../../utils/s3.js';
 import { normalizeOrgFeatures } from '../../middleware/plan.middleware.js';
 
 const ACTIVE = { deletedAt: null };
@@ -111,6 +112,7 @@ function serializeAssessment(doc, opts = {}) {
     negativeMarkPerWrong: doc.negativeMarkPerWrong ?? 0,
     allowPartialCredit: doc.allowPartialCredit !== false,
     showAnswersAfterSubmit: doc.showAnswersAfterSubmit !== false,
+    cameraMonitor: storedExamKind(doc) === 'online_exam' && doc.cameraMonitor === true,
     sections: Array.isArray(doc.sections) && doc.sections.length ? doc.sections : ['Section A'],
     kind: storedExamKind(doc),
     status: doc.status,
@@ -353,6 +355,7 @@ export async function createAssessment(models, actor, orgId, body, ip) {
     negativeMarkPerWrong: Number(body.negativeMarkPerWrong) || 0,
     allowPartialCredit: body.allowPartialCredit !== false,
     showAnswersAfterSubmit: body.showAnswersAfterSubmit !== false,
+    cameraMonitor: kind === 'online_exam' && body.cameraMonitor === true,
     sections,
     status: 'draft',
     createdBy: actor._id,
@@ -503,6 +506,9 @@ export async function updateAssessment(models, actor, orgId, assessmentId, body)
   if (body.allowPartialCredit !== undefined) doc.allowPartialCredit = !!body.allowPartialCredit;
   if (body.showAnswersAfterSubmit !== undefined) {
     doc.showAnswersAfterSubmit = !!body.showAnswersAfterSubmit;
+  }
+  if (body.cameraMonitor !== undefined) {
+    doc.cameraMonitor = storedExamKind(doc) === 'online_exam' && !!body.cameraMonitor;
   }
   if (body.sections !== undefined) {
     doc.sections =
@@ -831,7 +837,7 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
   };
 }
 
-export async function getAssignment(models, actor, orgId, assignmentId) {
+export async function getAssignment(models, actor, orgId, assignmentId, options = {}) {
   const { AssessmentAssignment, Assessment } = models;
   const oid = orgOid(orgId);
 
@@ -869,8 +875,11 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
   if (isStudentOwner) assertKindPermission(actor, storedExamKind(assessment), 'view');
 
   const durationMinutes = Number(assessment.durationMinutes ?? 60);
+  const deferStart =
+    Boolean(options.preview) && isStudentOwner && storedExamKind(assessment) === 'online_exam';
 
-  // Enforce assessment window before starting
+  // Enforce assessment window before starting.
+  // Online exams stay unstarted while the student is on the camera and connection check.
   if (isStudentOwner && assignment.status === 'pending' && !assignment.startedAt) {
     const now = new Date();
     if (assessment.startAt && new Date(assessment.startAt).getTime() > now.getTime()) {
@@ -883,11 +892,13 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
       err.status = 400;
       throw err;
     }
-    assignment.startedAt = now;
-    if (durationMinutes > 0) {
-      assignment.expiresAt = new Date(now.getTime() + durationMinutes * 60 * 1000);
+    if (!deferStart) {
+      assignment.startedAt = now;
+      if (durationMinutes > 0) {
+        assignment.expiresAt = new Date(now.getTime() + durationMinutes * 60 * 1000);
+      }
+      await assignment.save();
     }
-    await assignment.save();
   }
 
   // Auto-submit if timer already expired
@@ -1019,6 +1030,148 @@ export async function recordFullscreenExit(models, actor, orgId, assignmentId) {
     exitsRemaining: Math.max(0, MAX_FULLSCREEN_EXITS - count),
     forceSubmit: count >= MAX_FULLSCREEN_EXITS,
   };
+}
+
+const CAPTURE_COOLDOWN_MS = 12_000;
+const CAPTURE_LIMIT = 30;
+
+function decodeJpeg(image) {
+  const raw = String(image || '').replace(/^data:image\/jpeg;base64,/, '');
+  const buffer = Buffer.from(raw, 'base64');
+  if (buffer.length < 32 || buffer.length > 120000) {
+    const err = new Error('Image is empty or too large');
+    err.status = 400;
+    throw err;
+  }
+  if (buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+    const err = new Error('Image must be a JPEG');
+    err.status = 400;
+    throw err;
+  }
+  return buffer;
+}
+
+export async function saveProctorCapture(models, actor, orgId, assignmentId, body) {
+  if (!s3Configured()) {
+    const err = new Error('Image storage is not configured');
+    err.status = 503;
+    throw err;
+  }
+  const { AssessmentAssignment, Assessment, ProctorCapture } = models;
+  const oid = orgOid(orgId);
+  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid });
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  if (assignment.studentId?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+  if (assignment.status !== 'pending') {
+    const err = new Error('This exam is no longer in progress');
+    err.status = 409;
+    throw err;
+  }
+
+  const assessment = await Assessment.findOne({
+    _id: assignment.assessmentId,
+    orgId: oid,
+    status: 'published',
+    ...ACTIVE,
+  }).lean();
+  if (!assessment || storedExamKind(assessment) !== 'online_exam' || assessment.cameraMonitor !== true) {
+    const err = new Error('Camera capture is not enabled for this exam');
+    err.status = 400;
+    throw err;
+  }
+
+  const latest = await ProctorCapture.findOne({ orgId: oid, assignmentId: assignment._id })
+    .sort({ capturedAt: -1 })
+    .select('capturedAt')
+    .lean();
+  if (latest && Date.now() - new Date(latest.capturedAt).getTime() < CAPTURE_COOLDOWN_MS) {
+    return { saved: false, reason: 'cooldown' };
+  }
+  const count = await ProctorCapture.countDocuments({ orgId: oid, assignmentId: assignment._id });
+  if (count >= CAPTURE_LIMIT) {
+    return { saved: false, reason: 'limit' };
+  }
+
+  const buffer = decodeJpeg(body.image);
+  const captureId = new mongoose.Types.ObjectId();
+  const key = `proctor/${oid}/${assignment._id}/${captureId}.jpg`;
+  const storagePath = await uploadBufferToS3(buffer, key, 'image/jpeg');
+  await ProctorCapture.create({
+    _id: captureId,
+    orgId: oid,
+    assignmentId: assignment._id,
+    studentId: assignment.studentId,
+    storagePath,
+    capturedAt: new Date(),
+  });
+  return { saved: true, id: String(captureId) };
+}
+
+function assertCaptureReviewer(actor, assignment) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+  if (actor.hierarchyRole !== 'admin' && assignment.assignedBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+}
+
+export async function listProctorCaptures(models, actor, orgId, assignmentId) {
+  const { AssessmentAssignment, ProctorCapture } = models;
+  const oid = orgOid(orgId);
+  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid }).lean();
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  assertCaptureReviewer(actor, assignment);
+  const rows = await ProctorCapture.find({ orgId: oid, assignmentId: assignment._id })
+    .sort({ capturedAt: 1 })
+    .select('_id capturedAt')
+    .lean();
+  return {
+    captures: rows.map((row) => ({
+      id: String(row._id),
+      capturedAt: row.capturedAt,
+    })),
+  };
+}
+
+export async function readProctorCapture(models, actor, orgId, assignmentId, captureId) {
+  const { AssessmentAssignment, ProctorCapture } = models;
+  const oid = orgOid(orgId);
+  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid }).lean();
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  assertCaptureReviewer(actor, assignment);
+  const capture = await ProctorCapture.findOne({
+    _id: captureId,
+    orgId: oid,
+    assignmentId: assignment._id,
+  }).lean();
+  if (!capture) {
+    const err = new Error('Capture not found');
+    err.status = 404;
+    throw err;
+  }
+  const buffer = await downloadS3ToBuffer(capture.storagePath);
+  return { buffer, capturedAt: capture.capturedAt };
 }
 
 export async function submitAssignment(models, actor, orgId, assignmentId, body) {
@@ -1491,6 +1644,12 @@ export async function deleteAssignmentResult(models, actor, orgId, assessmentId,
     const err = new Error('Assignment not found');
     err.status = 404;
     throw err;
+  }
+
+  if (models.ProctorCapture) {
+    const shots = await models.ProctorCapture.find({ orgId: oid, assignmentId }).select('storagePath').lean();
+    await models.ProctorCapture.deleteMany({ orgId: oid, assignmentId });
+    await Promise.all(shots.map((shot) => deleteS3Object(shot.storagePath).catch(() => {})));
   }
 
   return { ok: true };

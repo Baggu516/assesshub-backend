@@ -13,6 +13,9 @@ import {
   getAssignment,
   submitAssignment,
   recordFullscreenExit,
+  saveProctorCapture,
+  listProctorCaptures,
+  readProctorCapture,
   getAssessmentResults,
   getAssessmentAssignmentSummary,
   releaseAssessmentResults,
@@ -105,13 +108,49 @@ export const getMyAssignments = asyncHandler(async (req, res) => {
 });
 
 export const getOneAssignment = asyncHandler(async (req, res) => {
+  const preview = req.query.preview === '1' || req.query.preview === 'true';
   const result = await getAssignment(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.assignmentId,
+    { preview }
+  );
+  res.json(result);
+});
+
+export const postProctorCapture = asyncHandler(async (req, res) => {
+  const result = await saveProctorCapture(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.assignmentId,
+    req.body
+  );
+  res.status(result.saved ? 201 : 200).json(result);
+});
+
+export const getProctorCaptures = asyncHandler(async (req, res) => {
+  const result = await listProctorCaptures(
     req.tenantModels,
     req.user,
     req.tenant.orgId,
     req.params.assignmentId
   );
   res.json(result);
+});
+
+export const getProctorCaptureImage = asyncHandler(async (req, res) => {
+  const { buffer } = await readProctorCapture(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.assignmentId,
+    req.params.captureId
+  );
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'private, max-age=300');
+  res.send(buffer);
 });
 
 export const postFullscreenExit = asyncHandler(async (req, res) => {

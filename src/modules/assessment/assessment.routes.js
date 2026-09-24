@@ -9,6 +9,7 @@ import {
   updateAssessmentSchema,
   assignAssessmentSchema,
   submitAssessmentSchema,
+  proctorCaptureSchema,
   listAssessmentQuery,
   listMyAssignmentsQuery,
   listResultsQuery,
@@ -27,6 +28,9 @@ import {
   getOneAssignment,
   postSubmitAssignment,
   postFullscreenExit,
+  postProctorCapture,
+  getProctorCaptures,
+  getProctorCaptureImage,
   getResults,
   getAssignmentSummary,
   postReleaseResults,
@@ -54,6 +58,22 @@ r.get(
   '/assignments/:assignmentId',
   requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW, PERMISSION_KEYS.ONLINE_EXAM_VIEW),
   getOneAssignment
+);
+r.post(
+  '/assignments/:assignmentId/captures',
+  requirePermission(PERMISSION_KEYS.ONLINE_EXAM_SUBMIT, PERMISSION_KEYS.ASSESSMENT_SUBMIT),
+  validateBody(proctorCaptureSchema),
+  postProctorCapture
+);
+r.get(
+  '/assignments/:assignmentId/captures',
+  requirePermission(PERMISSION_KEYS.ONLINE_EXAM_CREATE, PERMISSION_KEYS.ASSESSMENT_CREATE),
+  getProctorCaptures
+);
+r.get(
+  '/assignments/:assignmentId/captures/:captureId',
+  requirePermission(PERMISSION_KEYS.ONLINE_EXAM_CREATE, PERMISSION_KEYS.ASSESSMENT_CREATE),
+  getProctorCaptureImage
 );
 r.post(
   '/assignments/:assignmentId/fullscreen-exit',

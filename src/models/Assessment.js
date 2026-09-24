@@ -46,6 +46,8 @@ export const assessmentSchema = new mongoose.Schema(
      * Older documents have no kind and are treated as online exams.
      */
     kind: { type: String, enum: ['assessment', 'online_exam'], default: 'online_exam' },
+    /** Online exams only. When true, the student must enable the camera before starting. */
+    cameraMonitor: { type: Boolean, default: false },
     status: { type: String, enum: ASSESSMENT_STATUSES, default: 'draft' },
     /** Students see scores only after teacher announces results */
     resultsReleased: { type: Boolean, default: false },

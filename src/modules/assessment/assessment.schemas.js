@@ -53,6 +53,7 @@ export const createAssessmentSchema = z.object({
   negativeMarkPerWrong: z.number().min(0).max(10).optional().default(0),
   allowPartialCredit: z.boolean().optional().default(true),
   showAnswersAfterSubmit: z.boolean().optional().default(true),
+  cameraMonitor: z.boolean().optional().default(false),
   sections: z.array(z.string().trim().min(1).max(80)).optional(),
   questions: z.array(questionSchema).min(1),
 });
@@ -66,6 +67,7 @@ export const updateAssessmentSchema = z.object({
   negativeMarkPerWrong: z.number().min(0).max(10).optional(),
   allowPartialCredit: z.boolean().optional(),
   showAnswersAfterSubmit: z.boolean().optional(),
+  cameraMonitor: z.boolean().optional(),
   sections: z.array(z.string().trim().min(1).max(80)).optional(),
   questions: z.array(questionSchema).min(1).optional(),
 });
@@ -111,6 +113,10 @@ const answerInputSchema = z
       }
     }
   });
+
+export const proctorCaptureSchema = z.object({
+  image: z.string().min(32).max(180000),
+});
 
 export const submitAssessmentSchema = z.object({
   answers: z.array(answerInputSchema).default([]),

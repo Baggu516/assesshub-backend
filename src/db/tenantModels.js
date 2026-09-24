@@ -11,6 +11,7 @@ import { knowledgeDocumentSchema } from '../models/KnowledgeDocument.js';
 import { knowledgeChunkSchema } from '../models/KnowledgeChunk.js';
 import { assessmentSchema } from '../models/Assessment.js';
 import { assessmentAssignmentSchema } from '../models/AssessmentAssignment.js';
+import { proctorCaptureSchema } from '../models/ProctorCapture.js';
 import { studentGroupSchema } from '../models/StudentGroup.js';
 import { classSchema } from '../models/Class.js';
 import { classMemberSchema } from '../models/ClassMember.js';
@@ -144,6 +145,7 @@ export async function getTenantModels(subdomain) {
     KnowledgeChunk:
       conn.models.KnowledgeChunk || conn.model('KnowledgeChunk', knowledgeChunkSchema),
     Assessment: conn.models.Assessment || conn.model('Assessment', assessmentSchema),
+    ProctorCapture: conn.models.ProctorCapture || conn.model('ProctorCapture', proctorCaptureSchema),
     AssessmentAssignment: (() => {
       const m =
         conn.models.AssessmentAssignment ||
