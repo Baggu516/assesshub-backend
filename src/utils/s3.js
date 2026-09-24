@@ -55,6 +55,14 @@ export function publicUrlFromStorageRef(storagePath) {
   return s3PublicUrlForKey(ref.key);
 }
 
+/** HTTPS logo URL stored on the client, or derived from the S3 object key. */
+export function resolveStoredLogoUrl(org) {
+  const stored = typeof org?.logoUrl === 'string' ? org.logoUrl.trim() : '';
+  if (stored.startsWith('https://') || stored.startsWith('http://')) return stored;
+  if (org?.logoStoragePath) return publicUrlFromStorageRef(org.logoStoragePath);
+  return null;
+}
+
 function getClient() {
   if (!s3Configured()) {
     throw new Error('S3 is not configured (set S3_ENDPOINT, S3_REGION, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY, S3_BUCKET)');
@@ -106,30 +114,69 @@ async function streamToBuffer(stream) {
   return Buffer.concat(chunks);
 }
 
+async function readErrorBody(err) {
+  const body = err?.$response?.body;
+  if (!body) return '';
+  if (typeof body === 'string') return body;
+  if (typeof body.transformToString === 'function') {
+    try {
+      return await body.transformToString();
+    } catch {
+      return '';
+    }
+  }
+  try {
+    const chunks = [];
+    for await (const chunk of body) chunks.push(Buffer.from(chunk));
+    return Buffer.concat(chunks).toString('utf8');
+  } catch {
+    return '';
+  }
+}
+
+async function explainS3Failure(err) {
+  const text = (await readErrorBody(err)).replace(/\s+/g, ' ').trim();
+  if (text) {
+    const rawStatus = err?.$metadata?.httpStatusCode || err?.$response?.statusCode || 502;
+    const error = new Error(text.slice(0, 300));
+    error.statusCode = rawStatus >= 400 && rawStatus < 500 ? rawStatus : 503;
+    throw error;
+  }
+  throw err;
+}
+
 /** Upload a local file to S3; returns storage ref `s3://bucket/key`. */
 export async function uploadFileToS3(localPath, key, contentType = 'application/octet-stream') {
   const Body = createReadStream(localPath);
-  await getClient().send(
-    new PutObjectCommand({
-      Bucket: s3Bucket(),
-      Key: key.replace(/^\/+/, ''),
-      Body,
-      ContentType: contentType || 'application/octet-stream',
-    })
-  );
+  try {
+    await getClient().send(
+      new PutObjectCommand({
+        Bucket: s3Bucket(),
+        Key: key.replace(/^\/+/, ''),
+        Body,
+        ContentType: contentType || 'application/octet-stream',
+      })
+    );
+  } catch (err) {
+    await explainS3Failure(err);
+  }
   return toStorageRef(key);
 }
 
 /** Upload a buffer to S3; returns storage ref `s3://bucket/key`. */
 export async function uploadBufferToS3(buffer, key, contentType = 'application/octet-stream') {
-  await getClient().send(
-    new PutObjectCommand({
-      Bucket: s3Bucket(),
-      Key: key.replace(/^\/+/, ''),
-      Body: buffer,
-      ContentType: contentType || 'application/octet-stream',
-    })
-  );
+  try {
+    await getClient().send(
+      new PutObjectCommand({
+        Bucket: s3Bucket(),
+        Key: key.replace(/^\/+/, ''),
+        Body: buffer,
+        ContentType: contentType || 'application/octet-stream',
+      })
+    );
+  } catch (err) {
+    await explainS3Failure(err);
+  }
   return toStorageRef(key);
 }
 

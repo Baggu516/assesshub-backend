@@ -36,6 +36,8 @@ export const createOrganizationSchema = z
     adminPassword: z.string().min(8).optional(),
     firstName: z.string().max(100).optional(),
     lastName: z.string().max(100).optional(),
+    logoUrl: z.string().url().max(2000).optional(),
+    logoStoragePath: z.string().min(1).max(500).optional(),
   })
   .superRefine((data, ctx) => {
     const hasEmail = !!data.adminEmail;
@@ -45,6 +47,15 @@ export const createOrganizationSchema = z
         code: z.ZodIssueCode.custom,
         message: 'Provide both admin email and password, or leave both empty',
         path: hasEmail ? ['adminPassword'] : ['adminEmail'],
+      });
+    }
+    const hasLogoUrl = !!data.logoUrl;
+    const hasLogoPath = !!data.logoStoragePath;
+    if (hasLogoUrl !== hasLogoPath) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Logo URL and storage path must be sent together',
+        path: ['logoUrl'],
       });
     }
   });
@@ -58,6 +69,8 @@ export const patchOrganizationSchema = z
     /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
     features: orgFeaturesSchema.optional(),
+    logoUrl: z.string().url().max(2000).optional(),
+    logoStoragePath: z.string().min(1).max(500).optional(),
   })
   .refine(
     (data) =>
@@ -66,11 +79,16 @@ export const patchOrganizationSchema = z
       data.plan !== undefined ||
       data.features !== undefined ||
       data.tagline !== undefined ||
-      data.clearLogo !== undefined,
+      data.clearLogo !== undefined ||
+      data.logoUrl !== undefined,
     {
-      message: 'Provide at least one of name, isActive, plan, features, tagline, clearLogo',
+      message: 'Provide at least one of name, isActive, plan, features, tagline, clearLogo, logoUrl',
     }
-  );
+  )
+  .refine((data) => !!data.logoUrl === !!data.logoStoragePath, {
+    message: 'Logo URL and storage path must be sent together',
+    path: ['logoUrl'],
+  });
 
 export const createPlatformUserSchema = z.object({
   email: z.string().email(),

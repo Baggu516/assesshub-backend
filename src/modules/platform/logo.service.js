@@ -3,6 +3,8 @@ import path from 'path';
 import { AppError } from '../../utils/errors.js';
 import {
   deleteS3Object,
+  parseStorageRef,
+  s3Bucket,
   s3Configured,
   s3PublicUrlForKey,
   uploadBufferToS3,
@@ -45,6 +47,31 @@ export async function uploadClientLogo(file, subdomain) {
     throw new AppError('Could not build public logo URL', 500);
   }
   return { logoUrl, logoStoragePath };
+}
+
+export function assertClientLogoRef(logoUrl, logoStoragePath) {
+  const ref = parseStorageRef(logoStoragePath);
+  if (!ref || ref.bucket !== s3Bucket() || !ref.key.startsWith('logos/')) {
+    throw new AppError('Invalid logo', 400);
+  }
+  const expected = s3PublicUrlForKey(ref.key);
+  if (!logoUrl || expected !== logoUrl) {
+    throw new AppError('Logo URL does not match the uploaded file', 400);
+  }
+}
+
+export async function assignClientLogo(org, logoUrl, logoStoragePath) {
+  assertClientLogoRef(logoUrl, logoStoragePath);
+  const previous = org.logoStoragePath;
+  org.logoUrl = logoUrl;
+  org.logoStoragePath = logoStoragePath;
+  if (previous && previous !== logoStoragePath) {
+    try {
+      await deleteS3Object(previous);
+    } catch {
+      /* ignore cleanup errors */
+    }
+  }
 }
 
 export async function replaceClientLogo(org, file) {

@@ -1,5 +1,10 @@
 import { Organization } from '../../models/Organization.js';
-import { getTenantModels } from '../../db/tenantModels.js';
+import {
+  databaseNameFromSubdomain,
+  forgetTenantDatabaseName,
+  getTenantModels,
+  rememberTenantDatabaseName,
+} from '../../db/tenantModels.js';
 import { ensureTenantCatalog } from '../../db/tenantCatalog.js';
 import crypto from 'crypto';
 import { hashPassword, comparePassword, hashToken } from '../../utils/hash.js';
@@ -63,7 +68,7 @@ export function sanitizeUser(user) {
  */
 export async function provisionOrganizationAdmin(org, { adminEmail, adminPassword, firstName, lastName }) {
   const subdomain = org.subdomain;
-  const models = getTenantModels(subdomain);
+  const models = await getTenantModels(subdomain);
   await ensureTenantCatalog(models, subdomain);
 
   const { Role, User } = models;
@@ -115,23 +120,41 @@ export async function registerOrganization(payload) {
     throw err;
   }
 
+  const dbName = databaseNameFromSubdomain(sub);
+  const dbTaken = await Organization.findOne({ dbName }).select('_id').lean();
+  if (dbTaken) {
+    const err = new Error('Database name already in use');
+    err.status = 409;
+    throw err;
+  }
+
   const org = await Organization.create({
     name: payload.organizationName,
     subdomain: sub,
+    dbName,
   });
+  rememberTenantDatabaseName(sub, dbName);
 
-  const admin = await provisionOrganizationAdmin(org, {
-    adminEmail: payload.adminEmail,
-    adminPassword: payload.adminPassword,
-    firstName: payload.firstName,
-    lastName: payload.lastName,
-  });
+  let admin;
+  try {
+    admin = await provisionOrganizationAdmin(org, {
+      adminEmail: payload.adminEmail,
+      adminPassword: payload.adminPassword,
+      firstName: payload.firstName,
+      lastName: payload.lastName,
+    });
+  } catch (err) {
+    forgetTenantDatabaseName(sub);
+    await Organization.deleteOne({ _id: org._id });
+    throw err;
+  }
 
   return {
     organization: {
       id: org._id,
       name: org.name,
       subdomain: org.subdomain,
+      dbName: org.dbName,
     },
     user: sanitizeUser(admin),
   };
@@ -236,7 +259,7 @@ export async function refreshSession({ refreshToken, req }) {
     throw err;
   }
 
-  const models = getTenantModels(payload.subdomain);
+  const models = await getTenantModels(payload.subdomain);
   await ensureTenantCatalog(models, payload.subdomain);
   const { RefreshToken, User } = models;
 
@@ -285,7 +308,7 @@ export async function logout({ refreshToken }) {
       return;
     }
     if (!payload.subdomain) return;
-    const models = getTenantModels(payload.subdomain);
+    const models = await getTenantModels(payload.subdomain);
     const tokenHash = hashToken(refreshToken);
     await models.RefreshToken.updateOne({ tokenHash }, { $set: { revokedAt: new Date() } });
   } catch {

@@ -2,6 +2,8 @@ import 'dotenv/config';
 import { configureDns } from './utils/dns.js';
 import { createApp } from './app.js';
 import { connectDb } from './config/db.js';
+import { backfillMissingDatabaseNames } from './db/tenantModels.js';
+import { ensureMasterPermissionCatalog } from './db/permissionCatalog.js';
 
 configureDns();
 
@@ -18,6 +20,8 @@ async function main() {
   }
 
   await connectDb();
+  await backfillMissingDatabaseNames();
+  await ensureMasterPermissionCatalog();
   const port = parseInt(process.env.PORT, 10) || 4000;
   const server = app.listen(port, () => {
     console.log(`API listening on port ${port} (${process.env.NODE_ENV})`);

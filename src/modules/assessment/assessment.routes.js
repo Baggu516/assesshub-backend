@@ -39,83 +39,92 @@ const r = Router();
 
 r.use(tenantMiddleware, requireAuth);
 
-r.get('/assignees', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), getAssessmentAssignees);
+r.get(
+  '/assignees',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
+  getAssessmentAssignees
+);
 r.get(
   '/assignments/my',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW, PERMISSION_KEYS.ONLINE_EXAM_VIEW),
   validateQuery(listMyAssignmentsQuery),
   getMyAssignments
 );
 r.get(
   '/assignments/:assignmentId',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_VIEW, PERMISSION_KEYS.ONLINE_EXAM_VIEW),
   getOneAssignment
 );
 r.post(
   '/assignments/:assignmentId/fullscreen-exit',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT),
+  requirePermission(PERMISSION_KEYS.ONLINE_EXAM_SUBMIT, PERMISSION_KEYS.ASSESSMENT_SUBMIT),
   postFullscreenExit
 );
 r.post(
   '/assignments/:assignmentId/submit',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT, PERMISSION_KEYS.ONLINE_EXAM_SUBMIT),
   validateBody(submitAssessmentSchema),
   postSubmitAssignment
 );
 
-r.get('/', validateQuery(listAssessmentQuery), requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), getAssessments);
+r.get(
+  '/',
+  validateQuery(listAssessmentQuery),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
+  getAssessments
+);
 r.post(
   '/',
   validateBody(createAssessmentSchema),
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postAssessment
 );
-r.get('/:id', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), getOneAssessment);
+r.get('/:id', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE), getOneAssessment);
 r.patch(
   '/:id',
   validateBody(updateAssessmentSchema),
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   patchAssessment
 );
-r.delete('/:id', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), deleteOneAssessment);
-r.post('/:id/publish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), postPublishAssessment);
-r.post('/:id/unpublish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE), postUnpublishAssessment);
+r.delete('/:id', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE), deleteOneAssessment);
+r.post('/:id/publish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE), postPublishAssessment);
+r.post('/:id/unpublish', requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE), postUnpublishAssessment);
 r.post(
   '/:id/assign',
   validateBody(assignAssessmentSchema),
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postAssignAssessment
 );
 r.get(
   '/:id/results',
   validateQuery(listResultsQuery),
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   getResults
 );
 r.get(
   '/:id/assignment-summary',
   validateQuery(listResultsQuery),
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   getAssignmentSummary
 );
 r.post(
   '/:id/release-results',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postReleaseResults
 );
 r.post(
   '/:id/results/:assignmentId/reattempt',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postReattempt
 );
 r.post(
   '/:id/results/:assignmentId/hide',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postHideResult
 );
 r.delete(
   '/:id/results/:assignmentId',
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   deleteResult
 );
 

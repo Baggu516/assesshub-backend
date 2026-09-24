@@ -4,7 +4,7 @@ import path from 'path';
 const ALLOWED_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif']);
 const ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif']);
 
-const MAX_LOGO_BYTES = parseInt(process.env.LOGO_MAX_UPLOAD_BYTES || '', 10) || 2 * 1024 * 1024;
+const MAX_LOGO_BYTES = parseInt(process.env.LOGO_MAX_UPLOAD_BYTES || '', 10) || 1 * 1024 * 1024;
 
 function fileFilter(_req, file, cb) {
   const ext = path.extname(file.originalname || '').toLowerCase();

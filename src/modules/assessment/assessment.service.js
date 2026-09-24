@@ -51,6 +51,33 @@ function orgOid(orgId) {
   return new mongoose.Types.ObjectId(String(orgId));
 }
 
+function hashString(value) {
+  let hash = 2166136261;
+  const text = String(value);
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+/** Stable per student and question, so a refresh does not reshuffle mid-attempt. */
+function shuffleWithSeed(items, seedKey) {
+  const arr = items.slice();
+  let state = hashString(seedKey) || 1;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(next() * (i + 1));
+    const swap = arr[i];
+    arr[i] = arr[j];
+    arr[j] = swap;
+  }
+  return arr;
+}
+
 function serializeQuestion(q, { includeAnswers = true } = {}) {
   const base = {
     id: String(q._id),
@@ -185,8 +212,31 @@ function studentDisplayName(u) {
   return name || u.email;
 }
 
+function permissionForKind(kind, action) {
+  const online = kind !== 'assessment';
+  if (action === 'create') {
+    return online ? PERMISSION_KEYS.ONLINE_EXAM_CREATE : PERMISSION_KEYS.ASSESSMENT_CREATE;
+  }
+  if (action === 'submit') {
+    return online ? PERMISSION_KEYS.ONLINE_EXAM_SUBMIT : PERMISSION_KEYS.ASSESSMENT_SUBMIT;
+  }
+  return online ? PERMISSION_KEYS.ONLINE_EXAM_VIEW : PERMISSION_KEYS.ASSESSMENT_VIEW;
+}
+
+function assertKindPermission(actor, kind, action) {
+  const key = permissionForKind(kind, action);
+  if (!actor.permissions?.includes(key)) {
+    const err = new Error('Forbidden: missing required permission');
+    err.status = 403;
+    throw err;
+  }
+}
+
 function canCreateAssessment(actor) {
-  return actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_CREATE);
+  return (
+    actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_CREATE) ||
+    actor.permissions.includes(PERMISSION_KEYS.ONLINE_EXAM_CREATE)
+  );
 }
 
 function isStudent(actor) {
@@ -286,6 +336,7 @@ export async function createAssessment(models, actor, orgId, body, ip) {
   const fallbackSection = sections[0] || 'Section A';
 
   const kind = body.kind === 'assessment' ? 'assessment' : 'online_exam';
+  assertKindPermission(actor, kind, 'create');
   await assertExamKindAllowed(orgId, kind);
 
   const doc = await Assessment.create({
@@ -328,6 +379,7 @@ export async function listAssessments(models, actor, orgId, query) {
   const { page = 1, limit = 20, status } = query;
 
   const requestedKind = query.kind === 'assessment' ? 'assessment' : 'online_exam';
+  assertKindPermission(actor, requestedKind, 'create');
   await assertExamKindAllowed(orgId, requestedKind);
 
   const filter = { orgId: oid, ...ACTIVE, ...kindMongoFilter(requestedKind) };
@@ -397,6 +449,7 @@ export async function getAssessment(models, actor, orgId, assessmentId) {
   }
 
   await assertExamKindAllowed(orgId, storedExamKind(doc));
+  assertKindPermission(actor, storedExamKind(doc), 'create');
 
   const isOwner =
     canCreateAssessment(actor) &&
@@ -425,6 +478,7 @@ export async function updateAssessment(models, actor, orgId, assessmentId, body)
     err.status = 404;
     throw err;
   }
+  assertKindPermission(actor, storedExamKind(doc), 'create');
 
   if (actor.hierarchyRole === 'subordinate' && doc.createdBy?.toString() !== actor._id.toString()) {
     const err = new Error('Forbidden');
@@ -669,7 +723,12 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
   const { AssessmentAssignment, Assessment, User, AcademicYear } = models;
   const oid = orgOid(orgId);
 
-  if (!actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_VIEW)) {
+  if (query.kind === 'assessment' || query.kind === 'online_exam') {
+    assertKindPermission(actor, query.kind, 'view');
+  } else if (
+    !actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_VIEW) &&
+    !actor.permissions.includes(PERMISSION_KEYS.ONLINE_EXAM_VIEW)
+  ) {
     const err = new Error('Missing permission: assessment_view');
     err.status = 403;
     throw err;
@@ -807,6 +866,7 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
   }
 
   await assertExamKindAllowed(orgId, storedExamKind(assessment));
+  if (isStudentOwner) assertKindPermission(actor, storedExamKind(assessment), 'view');
 
   const durationMinutes = Number(assessment.durationMinutes ?? 60);
 
@@ -866,6 +926,16 @@ export async function getAssignment(models, actor, orgId, assignmentId) {
         if (q.options) {
           q.options = q.options.map(({ id, text }) => ({ id, text }));
         }
+      }
+    }
+  }
+
+  // Each student sees a different option order. Grading still uses option ids.
+  if (isStudentOwner) {
+    const studentKey = String(assignment.studentId);
+    for (const q of serializedAssessment.questions) {
+      if (Array.isArray(q.options) && q.options.length > 1) {
+        q.options = shuffleWithSeed(q.options, `${studentKey}:${q.id}`);
       }
     }
   }
@@ -952,7 +1022,10 @@ export async function recordFullscreenExit(models, actor, orgId, assignmentId) {
 }
 
 export async function submitAssignment(models, actor, orgId, assignmentId, body) {
-  if (!actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_SUBMIT)) {
+  if (
+    !actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_SUBMIT) &&
+    !actor.permissions.includes(PERMISSION_KEYS.ONLINE_EXAM_SUBMIT)
+  ) {
     const err = new Error('Missing permission: assessment_submit');
     err.status = 403;
     throw err;
@@ -994,6 +1067,7 @@ export async function submitAssignment(models, actor, orgId, assignmentId, body)
   }
 
   await assertExamKindAllowed(orgId, storedExamKind(assessment));
+  assertKindPermission(actor, storedExamKind(assessment), 'submit');
 
   const questionMap = new Map((assessment.questions || []).map((q) => [q._id.toString(), q]));
   const inputByQuestion = new Map((body.answers || []).map((a) => [String(a.questionId), a]));

@@ -40,7 +40,7 @@ r.get('/providers', getAiProviders);
 r.post(
   '/generate-questions',
   requireAiAssessmentCreate,
-  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE),
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   validateBody(aiGenerateQuestionsBodySchema),
   postAiGenerateQuestions
 );

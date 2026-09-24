@@ -1,24 +1,18 @@
+import { keysForRole, loadMasterPermissionCatalog } from './permissionCatalog.js';
+
 const catalogVersionBySubdomain = new Map();
 /** Bump when permission seeds / default role perms change so tenants re-sync in-process. */
-const CATALOG_VERSION = 3;
+const CATALOG_VERSION = 5;
 
 const LEGACY_TASK_PERMS = ['task_create', 'task_view', 'task_update', 'task_delete'];
 
 /**
- * Idempotent: seeds Permission docs and legacy cleanup once per tenant catalog version.
+ * Copy the registry permission catalog into this tenant, then align default role grants.
  */
 export async function ensureTenantCatalog(models, subdomain) {
   if (catalogVersionBySubdomain.get(subdomain) === CATALOG_VERSION) return;
 
-  const seeds = [
-    { key: 'user_create', label: 'Create students', description: 'Invite or create students (admin)' },
-    { key: 'subordinate_create', label: 'Create teachers', description: 'Add teachers under admin' },
-    { key: 'settings_manage', label: 'Manage settings', description: 'Organization settings' },
-    { key: 'class_manage', label: 'Manage classes', description: 'Create classes and assign teachers/students' },
-    { key: 'assessment_create', label: 'Create assessments', description: 'Build and assign assessments' },
-    { key: 'assessment_view', label: 'View assessments', description: 'View assigned or created assessments' },
-    { key: 'assessment_submit', label: 'Submit assessments', description: 'Take and submit assessments' },
-  ];
+  const seeds = await loadMasterPermissionCatalog();
 
   const { Permission, Role, User } = models;
 
@@ -26,20 +20,15 @@ export async function ensureTenantCatalog(models, subdomain) {
     await Permission.updateOne({ key: s.key }, { $set: s }, { upsert: true });
   }
 
+  const catalogKeys = seeds.map((row) => row.key);
+  await Permission.deleteMany({ key: { $nin: [...catalogKeys, ...LEGACY_TASK_PERMS] } });
   await Permission.deleteMany({ key: { $in: LEGACY_TASK_PERMS } });
 
-  /** Teachers view class students and run assessments — they do not create student accounts. */
-  const teacherPerms = ['assessment_create', 'assessment_view'];
-  const studentPerms = ['assessment_view', 'assessment_submit'];
-  const adminPerms = [
-    'subordinate_create',
-    'user_create',
-    'settings_manage',
-    'class_manage',
-    'assessment_create',
-    'assessment_view',
-    'assessment_submit',
-  ];
+  const teacherPerms = keysForRole('subordinate');
+  const studentPerms = keysForRole('user');
+  const adminPerms = keysForRole('admin');
+  const notForTeachers = catalogKeys.filter((key) => !teacherPerms.includes(key));
+  const notForStudents = catalogKeys.filter((key) => !studentPerms.includes(key));
 
   await Role.updateMany(
     { hierarchy: 'subordinate', isSystem: true },
@@ -55,7 +44,14 @@ export async function ensureTenantCatalog(models, subdomain) {
   );
 
   await User.updateMany({}, { $pull: { permissions: { $in: LEGACY_TASK_PERMS } } });
-  await User.updateMany({ hierarchyRole: 'subordinate' }, { $pull: { permissions: 'user_create' } });
+  await User.updateMany(
+    { hierarchyRole: 'subordinate' },
+    { $pull: { permissions: { $in: notForTeachers } } }
+  );
+  await User.updateMany(
+    { hierarchyRole: 'user' },
+    { $pull: { permissions: { $in: notForStudents } } }
+  );
 
   await User.updateMany(
     { hierarchyRole: 'subordinate' },

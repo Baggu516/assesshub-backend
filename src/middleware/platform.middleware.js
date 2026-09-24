@@ -20,7 +20,7 @@ async function acceptMasterTenantBearer(bearer) {
   const org = await Organization.findOne({ subdomain: 'master', isActive: { $ne: false } }).lean();
   if (!org) return null;
 
-  const { User } = getTenantModels('master');
+  const { User } = await getTenantModels('master');
   const user = await User.findById(payload.sub).lean();
   if (!user || !user.isActive) return null;
   if (String(user.orgId) !== String(org._id)) return null;

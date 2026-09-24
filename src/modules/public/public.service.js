@@ -1,16 +1,15 @@
 import { Organization } from '../../models/Organization.js';
 import { AppError } from '../../utils/errors.js';
 import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
-import { downloadS3ToBuffer, isS3StoragePath } from '../../utils/s3.js';
+import { downloadS3ToBuffer, isS3StoragePath, resolveStoredLogoUrl } from '../../utils/s3.js';
 import { normalizeOrgFeatures } from '../../middleware/plan.middleware.js';
 
 export function serializePublicBranding(org) {
-  const hasLogo = Boolean(org.logoUrl || org.logoStoragePath);
+  const logoUrl = resolveStoredLogoUrl(org);
   return {
     name: org.name,
     subdomain: org.subdomain,
-    // Prefer API proxy so logos work even if the Supabase bucket is private
-    logoUrl: hasLogo ? `/api/public/tenants/${org.subdomain}/logo` : null,
+    logoUrl,
     tagline: org.tagline || null,
     isActive: org.isActive !== false,
     features: normalizeOrgFeatures(org),
@@ -32,6 +31,12 @@ export async function getPublicTenantBranding(subdomainRaw) {
   const org = await Organization.findOne({ subdomain }).lean();
   if (!org || org.isActive === false) {
     throw new AppError('Tenant not found', 404);
+  }
+
+  const logoUrl = resolveStoredLogoUrl(org);
+  if (logoUrl && org.logoUrl !== logoUrl) {
+    await Organization.updateOne({ _id: org._id }, { $set: { logoUrl } });
+    org.logoUrl = logoUrl;
   }
 
   return serializePublicBranding(org);

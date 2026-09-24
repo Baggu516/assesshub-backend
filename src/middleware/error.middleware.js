@@ -11,7 +11,12 @@ export function errorMiddleware(err, req, res, _next) {
 
   if (err?.name === 'MulterError' || err?.code === 'LIMIT_FILE_SIZE') {
     return res.status(400).json({
-      error: err.code === 'LIMIT_FILE_SIZE' ? 'File is too large' : err.message || 'Upload failed',
+      error:
+        err.code === 'LIMIT_FILE_SIZE'
+          ? err.field === 'logo'
+            ? 'Image must be 1MB or smaller'
+            : 'File is too large'
+          : err.message || 'Upload failed',
     });
   }
 

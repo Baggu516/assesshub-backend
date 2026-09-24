@@ -7,6 +7,7 @@ import {
   listOrganizations as listOrganizationsService,
   patchOrganizationById,
 } from './platform.service.js';
+import { uploadClientLogo } from './logo.service.js';
 
 /** Coerce multipart text fields into typed body for Zod. */
 export function normalizeOrgFormBody(raw = {}) {
@@ -62,4 +63,9 @@ export const getOrganization = asyncHandler(async (req, res) => {
 
 export const patchOrganization = asyncHandler(async (req, res) => {
   res.json({ organization: await patchOrganizationById(req.params.id, req.body, req.file) });
+});
+
+export const uploadOrganizationLogo = asyncHandler(async (req, res) => {
+  const logo = await uploadClientLogo(req.file, req.body?.subdomain);
+  res.status(201).json(logo);
 });

@@ -7,7 +7,7 @@ async function attachTenant(req, subdomain) {
   const organization = await Organization.findOne({ subdomain, isActive: true });
   if (!organization) return false;
 
-  const models = getTenantModels(subdomain);
+  const models = await getTenantModels(subdomain);
   await ensureTenantCatalog(models, subdomain);
 
   req.tenantModels = models;

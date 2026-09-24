@@ -14,6 +14,7 @@ export function tenantResponse(org) {
     id: org._id,
     name: org.name,
     subdomain: org.subdomain,
+    dbName: org.dbName || null,
     isActive: org.isActive !== false,
     plan: planFromFeatures(features),
     features,

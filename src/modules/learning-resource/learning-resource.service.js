@@ -12,9 +12,8 @@ function orgOid(orgId) {
 
 function canManage(actor) {
   return (
-    actor.permissions?.includes(PERMISSION_KEYS.ASSESSMENT_CREATE) ||
-    actor.permissions?.includes(PERMISSION_KEYS.SETTINGS_MANAGE) ||
-    actor.permissions?.includes(PERMISSION_KEYS.CLASS_MANAGE)
+    actor.permissions?.includes(PERMISSION_KEYS.WORKSHEET_MANAGE) ||
+    actor.permissions?.includes(PERMISSION_KEYS.SETTINGS_MANAGE)
   );
 }
 

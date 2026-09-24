@@ -1,8 +1,14 @@
 import mongoose from 'mongoose';
-import { getTenantModels } from '../../db/tenantModels.js';
+import {
+  databaseNameFromSubdomain,
+  forgetTenantDatabaseName,
+  getTenantModels,
+  rememberTenantDatabaseName,
+} from '../../db/tenantModels.js';
 import { Organization } from '../../models/Organization.js';
 import { PlatformUser } from '../../models/PlatformUser.js';
 import { AppError } from '../../utils/errors.js';
+import { resolveStoredLogoUrl } from '../../utils/s3.js';
 import { comparePassword } from '../../utils/hash.js';
 import {
   platformTokenExpiresIn,
@@ -18,7 +24,13 @@ import {
   normalizeOrgFeatures,
   planFromFeatures,
 } from '../../middleware/plan.middleware.js';
-import { clearClientLogo, replaceClientLogo, uploadClientLogo } from './logo.service.js';
+import {
+  assertClientLogoRef,
+  assignClientLogo,
+  clearClientLogo,
+  replaceClientLogo,
+  uploadClientLogo,
+} from './logo.service.js';
 
 function featureFlags(raw, fallback = {}) {
   return {
@@ -52,15 +64,13 @@ function resolveIncomingFeatures(body, existingFeatures = null) {
 
 export function serializeOrganization(o, { poc } = {}) {
   const features = normalizeOrgFeatures(o);
-  const hasLogo = Boolean(o.logoUrl || o.logoStoragePath);
   const payload = {
     id: o._id.toString(),
     name: o.name,
     subdomain: o.subdomain,
+    dbName: o.dbName || null,
     isActive: o.isActive,
-    logoUrl: hasLogo
-      ? o.logoUrl || `/api/public/tenants/${o.subdomain}/logo`
-      : null,
+    logoUrl: resolveStoredLogoUrl(o),
     tagline: o.tagline || null,
     plan: planFromFeatures(features),
     features,
@@ -75,7 +85,7 @@ export function serializeOrganization(o, { poc } = {}) {
 /** First tenant admin as point of contact (read-only for platform console). */
 export async function resolveOrganizationPoc(org) {
   try {
-    const { User } = getTenantModels(org.subdomain);
+    const { User } = await getTenantModels(org.subdomain);
     const admin = await User.findOne({
       orgId: org._id,
       hierarchyRole: 'admin',
@@ -159,19 +169,28 @@ export async function createOrganizationWithOptionalAdmin(body, logoFile) {
   };
 
   let logoFields = {};
-  if (logoFile) {
+  if (body.logoUrl && body.logoStoragePath) {
+    assertClientLogoRef(body.logoUrl, body.logoStoragePath);
+    logoFields = { logoUrl: body.logoUrl, logoStoragePath: body.logoStoragePath };
+  } else if (logoFile) {
     logoFields = await uploadClientLogo(logoFile, sub);
   }
+
+  const dbName = databaseNameFromSubdomain(sub);
+  const dbTaken = await Organization.findOne({ dbName }).select('_id').lean();
+  if (dbTaken) throw new AppError('Database name already in use', 409);
 
   const org = await Organization.create({
     name: body.name,
     subdomain: sub,
+    dbName,
     isActive: body.isActive !== false,
     features,
     plan: planFromFeatures(features),
     tagline: body.tagline || undefined,
     ...logoFields,
   });
+  rememberTenantDatabaseName(sub, dbName);
 
   const wantsAdmin = !!(body.adminEmail && body.adminPassword);
 
@@ -183,7 +202,7 @@ export async function createOrganizationWithOptionalAdmin(body, logoFile) {
         firstName: body.firstName,
         lastName: body.lastName,
       });
-      const models = getTenantModels(org.subdomain);
+      const models = await getTenantModels(org.subdomain);
       const session = await issueTenantSession(models, populated, org.subdomain);
       const fresh = await Organization.findById(org._id).lean();
       return {
@@ -203,6 +222,7 @@ export async function createOrganizationWithOptionalAdmin(body, logoFile) {
         /* ignore */
       }
     }
+    forgetTenantDatabaseName(sub);
     await Organization.deleteOne({ _id: org._id });
     throw e;
   }
@@ -246,7 +266,9 @@ export async function patchOrganizationById(id, body, logoFile) {
     org.plan = planFromFeatures(nextFeatures);
   }
 
-  if (body.clearLogo === true && !logoFile) {
+  if (body.logoUrl && body.logoStoragePath) {
+    await assignClientLogo(org, body.logoUrl, body.logoStoragePath);
+  } else if (body.clearLogo === true && !logoFile) {
     await clearClientLogo(org);
   } else if (logoFile) {
     await replaceClientLogo(org, logoFile);

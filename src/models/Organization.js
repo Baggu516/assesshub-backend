@@ -11,6 +11,15 @@ const organizationSchema = new mongoose.Schema(
       trim: true,
       match: [/^[a-z0-9-]{2,63}$/, 'Invalid subdomain'],
     },
+    /** MongoDB database for this tenant. New tenants use the subdomain with no prefix. */
+    dbName: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      maxlength: 64,
+      unique: true,
+      sparse: true,
+    },
     isActive: { type: Boolean, default: true },
     /** Public HTTPS logo URL (Supabase Storage). Shown on the login page. */
     logoUrl: { type: String, trim: true },

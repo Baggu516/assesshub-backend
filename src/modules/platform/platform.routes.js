@@ -10,6 +10,7 @@ import {
   listOrganizations,
   getOrganization,
   patchOrganization,
+  uploadOrganizationLogo,
   normalizeOrgFormBody,
 } from './platform.controller.js';
 import {
@@ -47,6 +48,7 @@ r.get('/users/:id', getPlatformUser);
 r.patch('/users/:id', validateBody(patchPlatformUserSchema), patchPlatformUser);
 r.delete('/users/:id', deletePlatformUser);
 
+r.post('/organizations/logo', logoUpload.single('logo'), uploadOrganizationLogo);
 r.post(
   '/organizations',
   logoUpload.single('logo'),

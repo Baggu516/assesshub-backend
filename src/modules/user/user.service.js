@@ -2,29 +2,44 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { hashPassword } from '../../utils/hash.js';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
+import { keysForRole, permissionAllowedForRole } from '../../db/permissionCatalog.js';
 import { sendInvitationEmail, sendWelcomeUserEmail } from '../../utils/mailer.js';
 import { allocateRegistrationId } from '../../utils/registrationId.js';
 import { Organization } from '../../models/Organization.js';
 import { listAssignableStudents, mapStudentClassesForTeacher } from '../shared/studentScope.service.js';
 
-const DEFAULT_SUBORDINATE_PERMS = [
-  PERMISSION_KEYS.ASSESSMENT_CREATE,
-  PERMISSION_KEYS.ASSESSMENT_VIEW,
-];
+const DEFAULT_SUBORDINATE_PERMS = keysForRole('subordinate');
+const DEFAULT_MEMBER_PERMS = keysForRole('user');
 
-const DEFAULT_MEMBER_PERMS = [
-  PERMISSION_KEYS.ASSESSMENT_VIEW,
-  PERMISSION_KEYS.ASSESSMENT_SUBMIT,
-];
+function isLocalUrl(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.localhost');
+  } catch {
+    return /localhost|127\.0\.0\.1/i.test(String(url || ''));
+  }
+}
 
+/** Public sign-in address for welcome emails. Never a localhost link. */
 function loginWebsiteUrl(subdomain) {
-  const base = (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || 'http://localhost:5174')
+  const baseDomain = String(process.env.BASE_DOMAIN || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^\.+/, '');
+  const sub = String(subdomain || '')
+    .trim()
+    .toLowerCase();
+  if (sub && baseDomain && !isLocalUrl(`https://${baseDomain}`)) {
+    return `https://${sub}.${baseDomain}`;
+  }
+
+  const base = (process.env.FRONTEND_URL || process.env.CORS_ORIGIN || '')
     .split(',')[0]
     .trim()
     .replace(/\/$/, '');
-  if (!subdomain) return base;
-  // Prefer query/path tenant if no wildcard DNS; frontend already uses school subdomain field
-  return `${base}/?tenant=${encodeURIComponent(subdomain)}`;
+  if (!base || isLocalUrl(base)) return '';
+  if (!sub) return base;
+  return `${base}/?tenant=${encodeURIComponent(sub)}`;
 }
 
 async function resolveOrgMeta(orgId) {
@@ -368,6 +383,8 @@ export async function updateUser(models, actor, orgId, userId, body) {
     if (isAdminEditingNonAdmin && !isSettingsManager) {
       assertAssignablePermissionSubset(actor, body.permissions);
     }
+    const role = target.hierarchyRole;
+    body.permissions = body.permissions.filter((key) => permissionAllowedForRole(key, role));
   }
 
   if (body.parentUserId !== undefined && actor.hierarchyRole !== 'admin') {
