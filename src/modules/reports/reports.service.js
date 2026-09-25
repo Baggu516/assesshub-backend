@@ -118,12 +118,30 @@ export async function dashboardForActor(models, actor, orgId, query = {}) {
   }
 
   const mine = { orgId, studentId: actor._id, ...yearClause };
-  const [assigned, pending, submitted, submittedDocs] = await Promise.all([
+  const { Enrollment, Class } = models;
+  const [assigned, pending, submitted, submittedDocs, enrollment] = await Promise.all([
     AssessmentAssignment.countDocuments(mine),
     AssessmentAssignment.countDocuments({ ...mine, status: 'pending' }),
     AssessmentAssignment.countDocuments({ ...mine, status: 'submitted' }),
     AssessmentAssignment.find({ ...mine, status: 'submitted' }).select('score maxScore').lean(),
+    year
+      ? Enrollment.findOne({
+          orgId,
+          studentId: actor._id,
+          academicYearId: year._id,
+          isActive: true,
+          status: 'active',
+        })
+          .select('academicClassId')
+          .lean()
+      : null,
   ]);
+
+  let className = null;
+  if (enrollment?.academicClassId) {
+    const klass = await Class.findOne({ _id: enrollment.academicClassId, orgId }).select('name').lean();
+    className = klass?.name || null;
+  }
 
   let averageScorePercent = 0;
   if (submittedDocs.length) {
@@ -141,6 +159,7 @@ export async function dashboardForActor(models, actor, orgId, query = {}) {
     pendingAssessments: pending,
     submittedAssessments: submitted,
     averageScorePercent,
+    className,
   };
 }
 
