@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { tenantMiddleware } from '../../middleware/tenant.middleware.js';
 import { requireAuth } from '../../middleware/auth.middleware.js';
+import { captureLimiter } from '../../middleware/rateLimit.middleware.js';
 import { requirePermission } from '../../middleware/permission.middleware.js';
 import { validateBody, validateQuery } from '../../middleware/validate.middleware.js';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
@@ -61,6 +62,7 @@ r.get(
 );
 r.post(
   '/assignments/:assignmentId/captures',
+  captureLimiter,
   requirePermission(PERMISSION_KEYS.ONLINE_EXAM_SUBMIT, PERMISSION_KEYS.ASSESSMENT_SUBMIT),
   validateBody(proctorCaptureSchema),
   postProctorCapture
