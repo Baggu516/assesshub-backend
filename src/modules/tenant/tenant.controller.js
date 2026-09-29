@@ -23,6 +23,7 @@ const SIDEBAR_LABEL_KEYS = [
   'myAssessments',
   'groupStudents',
   'classes',
+  'myClass',
   'knowledgeBase',
 ];
 

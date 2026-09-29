@@ -89,7 +89,11 @@ export async function provisionOrganizationAdmin(org, { adminEmail, adminPasswor
   );
 
   const passwordHash = await hashPassword(adminPassword);
-  const registrationId = await allocateRegistrationId(User, org._id, subdomain);
+  const registrationId = await allocateRegistrationId(
+    User,
+    org._id,
+    org.registrationPrefix || subdomain
+  );
 
   const admin = await User.create({
     orgId: org._id,
@@ -196,7 +200,12 @@ export async function login({ email, identifier, password, orgId }, req) {
 
   // Backfill registration ID for older accounts
   try {
-    await ensureUserRegistrationId(user, User, subdomain);
+    const orgDoc = await Organization.findById(user.orgId).select('registrationPrefix subdomain').lean();
+    await ensureUserRegistrationId(
+      user,
+      User,
+      orgDoc?.registrationPrefix || orgDoc?.subdomain || subdomain
+    );
   } catch (err) {
     console.error('[registrationId] backfill failed:', err?.message || err);
   }

@@ -1,6 +1,8 @@
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import {
   listClasses,
+  listHomeroomClasses,
+  getHomeroomStudentPerformance,
   getClass,
   createClass,
   updateClass,
@@ -10,6 +12,28 @@ import {
 
 export const getClasses = asyncHandler(async (req, res) => {
   const result = await listClasses(req.tenantModels, req.user, req.tenant.orgId, req.query);
+  res.json(result);
+});
+
+export const getHomeroomClasses = asyncHandler(async (req, res) => {
+  const result = await listHomeroomClasses(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.query
+  );
+  res.json(result);
+});
+
+export const getHomeroomStudentPerformanceHandler = asyncHandler(async (req, res) => {
+  const result = await getHomeroomStudentPerformance(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.classId,
+    req.params.studentId,
+    req.query
+  );
   res.json(result);
 });
 

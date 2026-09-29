@@ -27,6 +27,16 @@ export const classSchema = new mongoose.Schema(
     },
     /** Section letter/name, e.g. "A", "B" */
     section: { type: String, default: '', trim: true, maxlength: 32 },
+    /**
+     * Homeroom / class teacher — must be an active teacher member of this class.
+     * Optional; one per academic class.
+     */
+    classTeacherId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+      index: true,
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     isActive: { type: Boolean, default: true },
     deletedAt: { type: Date, default: null, index: true },

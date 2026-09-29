@@ -11,6 +11,17 @@ const organizationSchema = new mongoose.Schema(
       trim: true,
       match: [/^[a-z0-9-]{2,63}$/, 'Invalid subdomain'],
     },
+    /**
+     * Prefix for student/teacher registration IDs (PREFIX + 5 digits).
+     * e.g. "PEA" → PEA48291. Falls back to subdomain when unset (legacy orgs).
+     */
+    registrationPrefix: {
+      type: String,
+      uppercase: true,
+      trim: true,
+      maxlength: 24,
+      match: [/^[A-Z0-9]{2,24}$/, 'Invalid registration prefix'],
+    },
     /** MongoDB database for this tenant. New tenants use the subdomain with no prefix. */
     dbName: {
       type: String,
@@ -64,6 +75,7 @@ const organizationSchema = new mongoose.Schema(
         myAssessments: { type: String, trim: true, maxlength: 48 },
         groupStudents: { type: String, trim: true, maxlength: 48 },
         classes: { type: String, trim: true, maxlength: 48 },
+        myClass: { type: String, trim: true, maxlength: 48 },
         knowledgeBase: { type: String, trim: true, maxlength: 48 },
       },
     },

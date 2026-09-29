@@ -1,14 +1,21 @@
 import crypto from 'crypto';
 
 /**
- * Build registration ID prefix from org subdomain/domain.
+ * Normalize a registration ID prefix (letters/digits only, uppercase).
  * e.g. "viswam" → "VISWAM", "my-school" → "MYSCHOOL"
  */
-export function registrationIdPrefix(subdomain) {
-  const cleaned = String(subdomain || '')
+export function registrationIdPrefix(raw) {
+  const cleaned = String(raw || '')
     .replace(/[^a-zA-Z0-9]/g, '')
     .toUpperCase();
   return cleaned || 'ORG';
+}
+
+/**
+ * Prefer org.registrationPrefix (school register ID string); fall back to subdomain.
+ */
+export function orgRegistrationPrefix(org) {
+  return registrationIdPrefix(org?.registrationPrefix || org?.subdomain);
 }
 
 function randomFiveDigits() {
@@ -16,11 +23,12 @@ function randomFiveDigits() {
 }
 
 /**
- * Generate a unique registration ID for an org: DOMAIN + 5 digits, all caps.
+ * Generate a unique registration ID for an org: PREFIX + 5 digits, all caps.
+ * `prefixSource` is typically org.registrationPrefix || org.subdomain.
  * Retries on collision.
  */
-export async function allocateRegistrationId(User, orgId, subdomain, { maxAttempts = 20 } = {}) {
-  const prefix = registrationIdPrefix(subdomain);
+export async function allocateRegistrationId(User, orgId, prefixSource, { maxAttempts = 20 } = {}) {
+  const prefix = registrationIdPrefix(prefixSource);
 
   for (let i = 0; i < maxAttempts; i += 1) {
     const registrationId = `${prefix}${randomFiveDigits()}`;
@@ -34,9 +42,9 @@ export async function allocateRegistrationId(User, orgId, subdomain, { maxAttemp
 }
 
 /** Ensure user has a registrationId; generates and saves if missing. */
-export async function ensureUserRegistrationId(user, User, subdomain) {
+export async function ensureUserRegistrationId(user, User, prefixSource) {
   if (user.registrationId) return String(user.registrationId).toUpperCase();
-  const registrationId = await allocateRegistrationId(User, user.orgId, subdomain);
+  const registrationId = await allocateRegistrationId(User, user.orgId, prefixSource);
   user.registrationId = registrationId;
   await user.save();
   return registrationId;

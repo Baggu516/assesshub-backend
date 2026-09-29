@@ -5,6 +5,8 @@ import { validateBody } from '../../middleware/validate.middleware.js';
 import { createClassSchema, updateClassSchema } from './class.schemas.js';
 import {
   getClasses,
+  getHomeroomClasses,
+  getHomeroomStudentPerformanceHandler,
   getOneClass,
   postClass,
   patchClass,
@@ -17,6 +19,11 @@ const r = Router();
 r.use(tenantMiddleware, requireAuth);
 
 r.get('/options', getClassOptions);
+r.get('/homeroom', getHomeroomClasses);
+r.get(
+  '/homeroom/:classId/students/:studentId/performance',
+  getHomeroomStudentPerformanceHandler
+);
 r.get('/', getClasses);
 r.post('/', validateBody(createClassSchema), postClass);
 r.get('/:id', getOneClass);

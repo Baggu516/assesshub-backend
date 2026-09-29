@@ -6,6 +6,8 @@ import {
   createMember,
   updateUser,
   inviteUser,
+  importMembers,
+  importSubordinates,
 } from './user.service.js';
 
 export const getUsers = asyncHandler(async (req, res) => {
@@ -41,4 +43,20 @@ export const patchUser = asyncHandler(async (req, res) => {
 export const postInvite = asyncHandler(async (req, res) => {
   const result = await inviteUser(req.tenantModels, req.user, req.tenant.orgId, req.body, process.env.FRONTEND_URL);
   res.status(201).json(result);
+});
+
+export const postImportMembers = asyncHandler(async (req, res) => {
+  const result = await importMembers(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.body,
+    process.env.FRONTEND_URL
+  );
+  res.status(200).json(result);
+});
+
+export const postImportSubordinates = asyncHandler(async (req, res) => {
+  const result = await importSubordinates(req.tenantModels, req.user, req.tenant.orgId, req.body);
+  res.status(200).json(result);
 });

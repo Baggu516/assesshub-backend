@@ -39,3 +39,33 @@ export const inviteUserSchema = z.object({
   parentUserId: z.string().optional(),
   permissions: permissionArray.optional(),
 });
+
+/** Per-row email/password validated in service so one bad row does not reject the batch. */
+export const importMembersSchema = z.object({
+  mode: z.enum(['create', 'invite']).default('create'),
+  students: z
+    .array(
+      z.object({
+        email: z.string().min(1).max(254),
+        firstName: z.string().max(80).optional().default(''),
+        lastName: z.string().max(80).optional().default(''),
+        password: z.string().max(128).optional(),
+      })
+    )
+    .min(1)
+    .max(200),
+});
+
+export const importSubordinatesSchema = z.object({
+  teachers: z
+    .array(
+      z.object({
+        email: z.string().min(1).max(254),
+        firstName: z.string().max(80).optional().default(''),
+        lastName: z.string().max(80).optional().default(''),
+        password: z.string().max(128).optional(),
+      })
+    )
+    .min(1)
+    .max(200),
+});

@@ -10,6 +10,8 @@ export const createClassSchema = z.object({
   academicYear: z.string().trim().max(32).optional(),
   teacherIds: z.array(z.string().min(1)).optional().default([]),
   studentIds: z.array(z.string().min(1)).optional().default([]),
+  /** Homeroom teacher; must be in teacherIds when set. null clears. */
+  classTeacherId: z.string().min(1).nullable().optional(),
 });
 
 export const updateClassSchema = z.object({
@@ -22,4 +24,5 @@ export const updateClassSchema = z.object({
   isActive: z.boolean().optional(),
   teacherIds: z.array(z.string().min(1)).optional(),
   studentIds: z.array(z.string().min(1)).optional(),
+  classTeacherId: z.string().min(1).nullable().optional(),
 });

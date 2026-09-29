@@ -69,6 +69,7 @@ export function serializeOrganization(o, { poc } = {}) {
     id: o._id.toString(),
     name: o.name,
     subdomain: o.subdomain,
+    registrationPrefix: o.registrationPrefix || null,
     dbName: o.dbName || null,
     isActive: o.isActive,
     logoUrl: resolveStoredLogoUrl(o),
@@ -184,6 +185,7 @@ export async function createOrganizationWithOptionalAdmin(body, logoFile) {
   const org = await Organization.create({
     name: body.name,
     subdomain: sub,
+    registrationPrefix: body.registrationPrefix,
     dbName,
     isActive: body.isActive !== false,
     features,
@@ -259,6 +261,13 @@ export async function patchOrganizationById(id, body, logoFile) {
   if (body.isActive !== undefined) org.isActive = body.isActive;
   if (body.tagline !== undefined) {
     org.tagline = body.tagline === null || body.tagline === '' ? undefined : body.tagline;
+  }
+
+  if (body.registrationPrefix !== undefined) {
+    if (org.registrationPrefix) {
+      throw new AppError('Register ID string is locked and cannot be changed', 400);
+    }
+    org.registrationPrefix = body.registrationPrefix;
   }
 
   const nextFeatures = resolveIncomingFeatures(body, normalizeOrgFeatures(org));

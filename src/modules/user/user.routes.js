@@ -4,7 +4,9 @@ import {
   getUsers,
   getSubordinates,
   postSubordinate,
+  postImportSubordinates,
   postMember,
+  postImportMembers,
   patchUser,
   postInvite,
 } from './user.controller.js';
@@ -17,6 +19,8 @@ import {
   createMemberSchema,
   updateUserSchema,
   inviteUserSchema,
+  importMembersSchema,
+  importSubordinatesSchema,
 } from './user.schemas.js';
 import { validateBody, validateQuery } from '../../middleware/validate.middleware.js';
 
@@ -44,10 +48,22 @@ r.post(
   postSubordinate
 );
 r.post(
+  '/subordinates/import',
+  validateBody(importSubordinatesSchema),
+  requirePermission(PERMISSION_KEYS.SUBORDINATE_CREATE),
+  postImportSubordinates
+);
+r.post(
   '/members',
   validateBody(createMemberSchema),
   requirePermission(PERMISSION_KEYS.USER_CREATE),
   postMember
+);
+r.post(
+  '/members/import',
+  validateBody(importMembersSchema),
+  requirePermission(PERMISSION_KEYS.USER_CREATE),
+  postImportMembers
 );
 r.patch('/:id', validateBody(updateUserSchema), patchUser);
 r.post('/invite', validateBody(inviteUserSchema), requirePermission(PERMISSION_KEYS.USER_CREATE), postInvite);

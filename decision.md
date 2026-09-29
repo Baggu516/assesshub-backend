@@ -4,6 +4,41 @@ Track incidents, fixes, and rules so we don’t repeat the same mistakes.
 
 ---
 
+## 2026-09-29 — Bulk student CSV import
+
+### Decision
+- Admins with `user_create` can `POST /users/members/import` with up to 200 rows (`mode: create | invite`).
+- Admins with `subordinate_create` can `POST /users/subordinates/import` with up to 200 teacher rows.
+- Existing emails (and duplicate rows in the same file) are **skipped**; other rows still import.
+- Real validation/create errors count as `failed`; response returns `created` / `skipped` / `failed` / `results`.
+- CSV is parsed on the frontend; API accepts JSON only (no multer for this path).
+- Class enrollment stays a separate step (Classes wizard) — import only creates accounts.
+
+---
+
+## 2026-09-29 — School register ID string for student/teacher IDs
+
+### Decision
+- Organization stores optional `registrationPrefix` (2–24 A–Z/0–9), set when creating a client.
+- Student/teacher `registrationId` = `PREFIX` + 5 random digits (e.g. `PEA48291`).
+- Prefix is **not** the subdomain; subdomain stays for tenant URL/DB. Legacy orgs without prefix still fall back to subdomain.
+- Prefix is locked after set (patch only allowed when missing).
+
+---
+
+## 2026-09-29 — Class teacher (homeroom) on AcademicClass
+
+### Decision
+- Store exactly one optional `classTeacherId` on `Class` (must be an active teacher member).
+- Do **not** add a separate ClassMember role for class teacher — keeps uniqueness simple.
+- Teachers track homeroom via `GET /classes/homeroom` and a frontend **My class** nav (read-focused), separate from admin **Classes** CRUD.
+
+### Rules
+- Clearing / removing a teacher who is class teacher clears `classTeacherId`.
+- Admins set class teacher in the class wizard Teachers step (radio).
+
+---
+
 ## 2026-09-29 — Production API down after Redis commit
 
 ### What happened

@@ -47,6 +47,7 @@ async function resolveOrgMeta(orgId) {
   return {
     name: org?.name || 'our school',
     subdomain: org?.subdomain || '',
+    registrationPrefix: org?.registrationPrefix || org?.subdomain || '',
   };
 }
 
@@ -238,7 +239,7 @@ export async function createSubordinate(models, creator, orgId, body) {
 
   const passwordHash = await hashPassword(body.password);
   const org = await resolveOrgMeta(orgId);
-  const registrationId = await allocateRegistrationId(User, orgId, org.subdomain);
+  const registrationId = await allocateRegistrationId(User, orgId, org.registrationPrefix);
 
   const user = await User.create({
     orgId,
@@ -311,7 +312,7 @@ export async function createMember(models, creator, orgId, body) {
   const password = body.password || crypto.randomBytes(12).toString('base64url');
   const passwordHash = await hashPassword(password);
   const org = await resolveOrgMeta(orgId);
-  const registrationId = await allocateRegistrationId(User, orgId, org.subdomain);
+  const registrationId = await allocateRegistrationId(User, orgId, org.registrationPrefix);
 
   const memberPermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
 
@@ -475,7 +476,11 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
 
   const invitePermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
   const org = await Organization.findById(orgId);
-  const registrationId = await allocateRegistrationId(User, orgId, org?.subdomain);
+  const registrationId = await allocateRegistrationId(
+    User,
+    orgId,
+    org?.registrationPrefix || org?.subdomain
+  );
 
   const user = await User.create({
     orgId,
@@ -518,4 +523,330 @@ export async function inviteUser(models, actor, orgId, body, appUrl) {
   }
 
   return { ok: true, userId: user._id, registrationId: user.registrationId };
+}
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isDuplicateUserError(err) {
+  const msg = String(err?.message || '').toLowerCase();
+  return (
+    err?.status === 409 ||
+    msg.includes('already exists') ||
+    msg.includes('duplicate')
+  );
+}
+
+/**
+ * Bulk-create or invite students. Existing / in-file duplicate emails are skipped;
+ * other rows still run. Real validation errors count as failed.
+ * @returns {{ created: number, skipped: number, failed: number, total: number, mode: string, results: object[] }}
+ */
+export async function importMembers(models, creator, orgId, body, appUrl) {
+  if (!creator.permissions.includes(PERMISSION_KEYS.USER_CREATE)) {
+    const err = new Error('Missing permission: user_create');
+    err.status = 403;
+    throw err;
+  }
+  if (creator.hierarchyRole !== 'admin') {
+    const err = new Error('Only administrators may import students');
+    err.status = 403;
+    throw err;
+  }
+
+  const { User } = models;
+  const mode = body.mode === 'invite' ? 'invite' : 'create';
+  const students = Array.isArray(body.students) ? body.students : [];
+  const results = [];
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
+  const seen = new Set();
+
+  const candidateEmails = [
+    ...new Set(
+      students
+        .map((row) =>
+          String(row?.email || '')
+            .trim()
+            .toLowerCase()
+        )
+        .filter((email) => email && EMAIL_RE.test(email))
+    ),
+  ];
+  const existingDocs =
+    candidateEmails.length > 0
+      ? await User.find({ orgId, email: { $in: candidateEmails } })
+          .select('email')
+          .lean()
+      : [];
+  const existingEmails = new Set(existingDocs.map((u) => String(u.email).toLowerCase()));
+
+  for (let i = 0; i < students.length; i += 1) {
+    const row = students[i] || {};
+    const rowNum = i + 1;
+    const email = String(row.email || '')
+      .trim()
+      .toLowerCase();
+    const firstName = String(row.firstName || '').trim();
+    const lastName = String(row.lastName || '').trim();
+    const password = row.password != null ? String(row.password).trim() : '';
+
+    if (!email) {
+      results.push({ row: rowNum, email: '', ok: false, skipped: false, error: 'Email is required' });
+      failed += 1;
+      continue;
+    }
+    if (!EMAIL_RE.test(email)) {
+      results.push({ row: rowNum, email, ok: false, skipped: false, error: 'Invalid email' });
+      failed += 1;
+      continue;
+    }
+    if (seen.has(email)) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: true,
+        error: 'Duplicate email in file — skipped',
+      });
+      skipped += 1;
+      continue;
+    }
+    seen.add(email);
+
+    if (existingEmails.has(email)) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: true,
+        error: 'Already exists — skipped',
+      });
+      skipped += 1;
+      continue;
+    }
+
+    if (mode === 'create' && password && password.length < 8) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: false,
+        error: 'Password must be at least 8 characters (or leave blank to auto-generate)',
+      });
+      failed += 1;
+      continue;
+    }
+
+    try {
+      if (mode === 'invite') {
+        const result = await inviteUser(
+          models,
+          creator,
+          orgId,
+          { email, firstName, lastName },
+          appUrl
+        );
+        existingEmails.add(email);
+        results.push({
+          row: rowNum,
+          email,
+          ok: true,
+          skipped: false,
+          userId: result.userId?.toString?.() || result.userId,
+          registrationId: result.registrationId,
+        });
+        created += 1;
+      } else {
+        const result = await createMember(models, creator, orgId, {
+          email,
+          firstName,
+          lastName,
+          ...(password ? { password } : {}),
+        });
+        existingEmails.add(email);
+        results.push({
+          row: rowNum,
+          email,
+          ok: true,
+          skipped: false,
+          userId: result.user?.id,
+          registrationId: result.user?.registrationId,
+          generatedPassword: result.generatedPassword,
+        });
+        created += 1;
+      }
+    } catch (err) {
+      if (isDuplicateUserError(err)) {
+        existingEmails.add(email);
+        results.push({
+          row: rowNum,
+          email,
+          ok: false,
+          skipped: true,
+          error: 'Already exists — skipped',
+        });
+        skipped += 1;
+      } else {
+        results.push({
+          row: rowNum,
+          email,
+          ok: false,
+          skipped: false,
+          error: err?.message || 'Failed to create student',
+        });
+        failed += 1;
+      }
+    }
+  }
+
+  return { created, skipped, failed, total: students.length, mode, results };
+}
+
+/**
+ * Bulk-create teachers. Existing / in-file duplicate emails are skipped.
+ * @returns {{ created: number, skipped: number, failed: number, total: number, results: object[] }}
+ */
+export async function importSubordinates(models, creator, orgId, body) {
+  if (!creator.permissions.includes(PERMISSION_KEYS.SUBORDINATE_CREATE)) {
+    const err = new Error('Missing permission: subordinate_create');
+    err.status = 403;
+    throw err;
+  }
+  if (creator.hierarchyRole !== 'admin') {
+    const err = new Error('Only administrators may import teachers');
+    err.status = 403;
+    throw err;
+  }
+
+  const { User } = models;
+  const teachers = Array.isArray(body.teachers) ? body.teachers : [];
+  const results = [];
+  let created = 0;
+  let skipped = 0;
+  let failed = 0;
+  const seen = new Set();
+
+  const candidateEmails = [
+    ...new Set(
+      teachers
+        .map((row) =>
+          String(row?.email || '')
+            .trim()
+            .toLowerCase()
+        )
+        .filter((email) => email && EMAIL_RE.test(email))
+    ),
+  ];
+  const existingDocs =
+    candidateEmails.length > 0
+      ? await User.find({ orgId, email: { $in: candidateEmails } })
+          .select('email')
+          .lean()
+      : [];
+  const existingEmails = new Set(existingDocs.map((u) => String(u.email).toLowerCase()));
+
+  for (let i = 0; i < teachers.length; i += 1) {
+    const row = teachers[i] || {};
+    const rowNum = i + 1;
+    const email = String(row.email || '')
+      .trim()
+      .toLowerCase();
+    const firstName = String(row.firstName || '').trim();
+    const lastName = String(row.lastName || '').trim();
+    const passwordRaw = row.password != null ? String(row.password).trim() : '';
+
+    if (!email) {
+      results.push({ row: rowNum, email: '', ok: false, skipped: false, error: 'Email is required' });
+      failed += 1;
+      continue;
+    }
+    if (!EMAIL_RE.test(email)) {
+      results.push({ row: rowNum, email, ok: false, skipped: false, error: 'Invalid email' });
+      failed += 1;
+      continue;
+    }
+    if (seen.has(email)) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: true,
+        error: 'Duplicate email in file — skipped',
+      });
+      skipped += 1;
+      continue;
+    }
+    seen.add(email);
+
+    if (existingEmails.has(email)) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: true,
+        error: 'Already exists — skipped',
+      });
+      skipped += 1;
+      continue;
+    }
+
+    if (passwordRaw && passwordRaw.length < 8) {
+      results.push({
+        row: rowNum,
+        email,
+        ok: false,
+        skipped: false,
+        error: 'Password must be at least 8 characters (or leave blank to auto-generate)',
+      });
+      failed += 1;
+      continue;
+    }
+
+    const generated = !passwordRaw;
+    const password = passwordRaw || crypto.randomBytes(12).toString('base64url');
+
+    try {
+      const user = await createSubordinate(models, creator, orgId, {
+        email,
+        firstName,
+        lastName,
+        password,
+      });
+      existingEmails.add(email);
+      results.push({
+        row: rowNum,
+        email,
+        ok: true,
+        skipped: false,
+        userId: user?.id,
+        registrationId: user?.registrationId,
+        generatedPassword: generated ? password : undefined,
+      });
+      created += 1;
+    } catch (err) {
+      if (isDuplicateUserError(err)) {
+        existingEmails.add(email);
+        results.push({
+          row: rowNum,
+          email,
+          ok: false,
+          skipped: true,
+          error: 'Already exists — skipped',
+        });
+        skipped += 1;
+      } else {
+        results.push({
+          row: rowNum,
+          email,
+          ok: false,
+          skipped: false,
+          error: err?.message || 'Failed to create teacher',
+        });
+        failed += 1;
+      }
+    }
+  }
+
+  return { created, skipped, failed, total: teachers.length, results };
 }

@@ -23,10 +23,22 @@ const subdomainSchema = z
     message: 'This subdomain is reserved',
   });
 
+/** School register ID string — becomes PREFIX in student/teacher IDs (PREFIX + 5 digits). */
+const registrationPrefixSchema = z
+  .string()
+  .trim()
+  .min(2)
+  .max(24)
+  .transform((s) => s.replace(/[^a-zA-Z0-9]/g, '').toUpperCase())
+  .refine((s) => /^[A-Z0-9]{2,24}$/.test(s), {
+    message: 'Register ID string: 2–24 letters or digits only',
+  });
+
 export const createOrganizationSchema = z
   .object({
     name: z.string().min(1).max(200),
     subdomain: subdomainSchema,
+    registrationPrefix: registrationPrefixSchema,
     isActive: z.boolean().optional(),
     tagline: z.string().trim().max(160).optional(),
     /** @deprecated Prefer `features`. Still accepted for older clients. */
@@ -65,6 +77,8 @@ export const patchOrganizationSchema = z
     name: z.string().min(1).max(200).optional(),
     isActive: z.boolean().optional(),
     tagline: z.string().trim().max(160).nullable().optional(),
+    /** Set once if missing on legacy orgs; ignored when already set (locked). */
+    registrationPrefix: registrationPrefixSchema.optional(),
     clearLogo: z.boolean().optional(),
     /** @deprecated Prefer `features`. Still accepted for older clients. */
     plan: z.enum(['assessments_only', 'ai_dashboard']).optional(),
@@ -79,10 +93,12 @@ export const patchOrganizationSchema = z
       data.plan !== undefined ||
       data.features !== undefined ||
       data.tagline !== undefined ||
+      data.registrationPrefix !== undefined ||
       data.clearLogo !== undefined ||
       data.logoUrl !== undefined,
     {
-      message: 'Provide at least one of name, isActive, plan, features, tagline, clearLogo, logoUrl',
+      message:
+        'Provide at least one of name, isActive, plan, features, tagline, registrationPrefix, clearLogo, logoUrl',
     }
   )
   .refine((data) => !!data.logoUrl === !!data.logoStoragePath, {
