@@ -13,6 +13,7 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../uti
 import { ALL_PERMISSION_KEYS } from '../../constants/permissions.js';
 import { allocateRegistrationId, ensureUserRegistrationId } from '../../utils/registrationId.js';
 import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
+import { revokeUserAccessTokens } from '../../cache/tokenRevocation.js';
 
 /** Stores refresh token and returns the same token payload shape as login. */
 export async function issueTenantSession(models, populatedUser, subdomain) {
@@ -311,6 +312,9 @@ export async function logout({ refreshToken }) {
     const models = await getTenantModels(payload.subdomain);
     const tokenHash = hashToken(refreshToken);
     await models.RefreshToken.updateOne({ tokenHash }, { $set: { revokedAt: new Date() } });
+    if (payload.sub) {
+      await revokeUserAccessTokens(payload.sub);
+    }
   } catch {
     /* ignore */
   }
@@ -445,5 +449,6 @@ export async function resetPasswordWithOtp({ identifier, otp, password, orgId },
   await user.save();
 
   await RefreshToken.updateMany({ userId: user._id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  await revokeUserAccessTokens(user._id.toString());
   return { ok: true };
 }

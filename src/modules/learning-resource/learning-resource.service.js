@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
-import { Organization } from '../../models/Organization.js';
 import { normalizeOrgFeatures } from '../../middleware/plan.middleware.js';
 import { deleteS3Object, readStorageBytes, uploadBufferToS3 } from '../../utils/s3.js';
+import { getOrgByIdCached } from '../../cache/orgCache.js';
 
 const ACTIVE = { deletedAt: null };
 
@@ -58,7 +58,7 @@ function serialize(doc, classNameById = new Map()) {
 }
 
 async function assertKindEnabled(orgId, kind) {
-  const org = await Organization.findById(orgId).select('features plan subdomain').lean();
+  const org = await getOrgByIdCached(orgId, 'features plan subdomain');
   const features = normalizeOrgFeatures(org);
   if (kind !== 'worksheet' || !features.worksheets) {
     const err = new Error('Worksheets are not included in this organization plan.');

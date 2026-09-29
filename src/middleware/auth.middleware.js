@@ -1,4 +1,5 @@
 import { verifyAccessToken } from '../utils/jwt.js';
+import { isAccessTokenRevoked } from '../cache/tokenRevocation.js';
 
 export async function requireAuth(req, res, next) {
   try {
@@ -13,6 +14,10 @@ export async function requireAuth(req, res, next) {
       payload = verifyAccessToken(token);
     } catch {
       return res.status(401).json({ error: 'Invalid or expired access token' });
+    }
+
+    if (await isAccessTokenRevoked(payload)) {
+      return res.status(401).json({ error: 'Access token has been revoked' });
     }
 
     if (!req.tenantModels) {

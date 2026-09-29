@@ -1,8 +1,9 @@
-import { Organization } from '../../models/Organization.js';
 import { AppError } from '../../utils/errors.js';
 import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
 import { downloadS3ToBuffer, isS3StoragePath, resolveStoredLogoUrl } from '../../utils/s3.js';
 import { normalizeOrgFeatures } from '../../middleware/plan.middleware.js';
+import { getOrgBySubdomainCached, invalidateOrgCache } from '../../cache/orgCache.js';
+import { Organization } from '../../models/Organization.js';
 
 export function serializePublicBranding(org) {
   const logoUrl = resolveStoredLogoUrl(org);
@@ -28,7 +29,7 @@ export async function getPublicTenantBranding(subdomainRaw) {
     throw new AppError('Tenant not found', 404);
   }
 
-  const org = await Organization.findOne({ subdomain }).lean();
+  const org = await getOrgBySubdomainCached(subdomain);
   if (!org || org.isActive === false) {
     throw new AppError('Tenant not found', 404);
   }
@@ -37,6 +38,7 @@ export async function getPublicTenantBranding(subdomainRaw) {
   if (logoUrl && org.logoUrl !== logoUrl) {
     await Organization.updateOne({ _id: org._id }, { $set: { logoUrl } });
     org.logoUrl = logoUrl;
+    await invalidateOrgCache({ subdomain, orgId: org._id });
   }
 
   return serializePublicBranding(org);

@@ -44,3 +44,5 @@ npm run dev
 ```
 
 Required env: `MONGODB_URI`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`. See `.env.example`.
+
+Optional Upstash Redis (`UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN`): shared rate limits, org/tenant cache, dashboard + academic-year snapshots, catalog version flag, and access-token revocation after logout/password reset. Without these vars the API falls back to memory/Mongo only.

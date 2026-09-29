@@ -1,10 +1,10 @@
-import { Organization } from '../models/Organization.js';
 import { getTenantModels } from '../db/tenantModels.js';
 import { ensureTenantCatalog } from '../db/tenantCatalog.js';
 import { resolveSubdomainFromRequest } from '../utils/tenant.js';
+import { getActiveOrgBySubdomain } from '../cache/orgCache.js';
 
 async function attachTenant(req, subdomain) {
-  const organization = await Organization.findOne({ subdomain, isActive: true });
+  const organization = await getActiveOrgBySubdomain(subdomain);
   if (!organization) return false;
 
   const models = await getTenantModels(subdomain);

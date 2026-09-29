@@ -1,4 +1,5 @@
 import { keysForRole, loadMasterPermissionCatalog } from './permissionCatalog.js';
+import { catalogVersionMatches, setCatalogVersion } from '../cache/catalogCache.js';
 
 const catalogVersionBySubdomain = new Map();
 /** Bump when permission seeds / default role perms change so tenants re-sync in-process. */
@@ -11,6 +12,12 @@ const LEGACY_TASK_PERMS = ['task_create', 'task_view', 'task_update', 'task_dele
  */
 export async function ensureTenantCatalog(models, subdomain) {
   if (catalogVersionBySubdomain.get(subdomain) === CATALOG_VERSION) return;
+
+  const redisMatch = await catalogVersionMatches(subdomain, CATALOG_VERSION);
+  if (redisMatch === true) {
+    catalogVersionBySubdomain.set(subdomain, CATALOG_VERSION);
+    return;
+  }
 
   const seeds = await loadMasterPermissionCatalog();
 
@@ -67,4 +74,5 @@ export async function ensureTenantCatalog(models, subdomain) {
   );
 
   catalogVersionBySubdomain.set(subdomain, CATALOG_VERSION);
+  await setCatalogVersion(subdomain, CATALOG_VERSION);
 }

@@ -31,6 +31,7 @@ import {
   replaceClientLogo,
   uploadClientLogo,
 } from './logo.service.js';
+import { invalidateOrgCache } from '../../cache/orgCache.js';
 
 function featureFlags(raw, fallback = {}) {
   return {
@@ -276,5 +277,6 @@ export async function patchOrganizationById(id, body, logoFile) {
 
   await org.save();
 
+  await invalidateOrgCache({ subdomain: org.subdomain, orgId: org._id });
   return serializeOrganization(org.toObject());
 }

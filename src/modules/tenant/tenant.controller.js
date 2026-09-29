@@ -1,6 +1,7 @@
 import { asyncHandler } from '../../utils/asyncHandler.js';
 import { tenantResponse } from './tenant.service.js';
 import { Organization } from '../../models/Organization.js';
+import { invalidateOrgCache } from '../../cache/orgCache.js';
 
 /** Current tenant context (from middleware). */
 export const getCurrentTenant = asyncHandler(async (req, res) => {
@@ -51,5 +52,6 @@ export const patchOrgSettings = asyncHandler(async (req, res) => {
     org.markModified('settings');
   }
   await org.save();
+  await invalidateOrgCache({ subdomain: org.subdomain, orgId: org._id });
   res.json({ organization: tenantResponse(org.toObject()) });
 });

@@ -1,6 +1,12 @@
 import mongoose from 'mongoose';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
 import { logActivity } from '../../utils/activity.js';
+import {
+  getCachedAcademicYearList,
+  invalidateAcademicYearCache,
+  setCachedAcademicYearList,
+} from '../../cache/academicYearCache.js';
+import { invalidateDashboardForOrg } from '../../cache/dashboardCache.js';
 
 const ACTIVE = { deletedAt: null };
 
@@ -31,11 +37,16 @@ function serialize(doc) {
 
 export async function listAcademicYears(models, _actor, orgId) {
   // Any authenticated tenant user may list years (students filter My assessments by year).
+  const cached = await getCachedAcademicYearList(orgId);
+  if (cached) return cached;
+
   const { AcademicYear } = models;
   const years = await AcademicYear.find({ orgId: orgOid(orgId), ...ACTIVE })
     .sort({ label: -1 })
     .lean();
-  return { academicYears: years.map(serialize) };
+  const payload = { academicYears: years.map(serialize) };
+  await setCachedAcademicYearList(orgId, payload);
+  return payload;
 }
 
 export async function getAcademicYear(models, _actor, orgId, id) {
@@ -94,6 +105,8 @@ export async function createAcademicYear(models, actor, orgId, body, ip) {
     ip,
   });
 
+  await invalidateAcademicYearCache(orgId);
+  await invalidateDashboardForOrg(orgId);
   return serialize(doc);
 }
 
@@ -164,6 +177,8 @@ export async function updateAcademicYear(models, actor, orgId, id, body, ip) {
     ip,
   });
 
+  await invalidateAcademicYearCache(orgId);
+  await invalidateDashboardForOrg(orgId);
   return serialize(doc);
 }
 
@@ -212,5 +227,7 @@ export async function deleteAcademicYear(models, actor, orgId, id, ip) {
     ip,
   });
 
+  await invalidateAcademicYearCache(orgId);
+  await invalidateDashboardForOrg(orgId);
   return { ok: true };
 }
