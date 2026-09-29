@@ -6,7 +6,8 @@
   "description": "ClassTrio multi-tenant assessment API",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "check:critical": "node scripts/check-critical-files.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
