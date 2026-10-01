@@ -10,6 +10,7 @@ function getTransporter() {
       host: process.env.SMTP_HOST,
       port,
       secure: port === 465,
+      requireTLS: port === 587,
       auth:
         process.env.SMTP_USER && process.env.SMTP_PASS
           ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
@@ -17,6 +18,18 @@ function getTransporter() {
     });
   }
   return transporter;
+}
+
+function transactionalFrom() {
+  return process.env.MAIL_FROM || 'ClassTrio <no-reply@classtrio.in>';
+}
+
+function outboundHeaders() {
+  const replyTo = String(process.env.MAIL_REPLY_TO || '').trim();
+  return {
+    from: transactionalFrom(),
+    ...(replyTo ? { replyTo } : {}),
+  };
 }
 
 function escapeHtml(value) {
@@ -34,7 +47,7 @@ export async function sendInvitationEmail({ to, orgName, inviteLink, inviterName
 
   if (tx) {
     await tx.sendMail({
-      from: process.env.MAIL_FROM || process.env.SMTP_USER,
+      ...outboundHeaders(),
       to,
       subject,
       text,
@@ -124,7 +137,7 @@ export async function sendWelcomeUserEmail({
   }
 
   await transport.sendMail({
-    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    ...outboundHeaders(),
     to,
     subject,
     text,
@@ -162,7 +175,7 @@ export async function sendPasswordResetOtp({ to, orgName, code }) {
   }
 
   await transport.sendMail({
-    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    ...outboundHeaders(),
     to,
     subject,
     text,
@@ -235,7 +248,7 @@ export async function sendAssessmentResultsReleasedEmail({
   }
 
   await transport.sendMail({
-    from: process.env.MAIL_FROM || process.env.SMTP_USER,
+    ...outboundHeaders(),
     to,
     subject,
     text,
