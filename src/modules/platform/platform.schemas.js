@@ -11,6 +11,7 @@ const orgFeaturesSchema = z.object({
   aiAssessmentCreate: z.boolean(),
   worksheets: z.boolean().optional().default(false),
   assessments: z.boolean().optional().default(false),
+  quizzes: z.boolean().optional().default(false),
   onlineExams: z.boolean().optional().default(false),
 });
 

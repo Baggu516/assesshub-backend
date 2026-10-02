@@ -44,7 +44,7 @@ export const questionSchema = z
   });
 
 export const createAssessmentSchema = z.object({
-  kind: z.enum(['assessment', 'online_exam']).optional().default('online_exam'),
+  kind: z.enum(['assessment', 'online_exam', 'quiz']).optional().default('online_exam'),
   title: z.string().trim().min(1).max(500),
   description: z.string().max(5000).optional().default(''),
   durationMinutes: z.number().int().min(0).max(300).optional().default(60),
@@ -89,10 +89,14 @@ export const assignAssessmentSchema = z
     }
   });
 
+export const joinAssessmentSchema = z.object({
+  code: z.string().trim().min(4).max(12),
+});
+
 export const listMyAssignmentsQuery = z.object({
   /** Omit / empty = current year; "all" = every year */
   academicYearId: z.string().optional(),
-  kind: z.enum(['assessment', 'online_exam']).optional(),
+  kind: z.enum(['assessment', 'online_exam', 'quiz']).optional(),
 });
 
 export const listResultsQuery = z.object({
@@ -118,6 +122,10 @@ export const proctorCaptureSchema = z.object({
   image: z.string().min(32).max(180000),
 });
 
+export const quizProgressSchema = z.object({
+  answers: z.array(answerInputSchema).default([]),
+});
+
 export const submitAssessmentSchema = z.object({
   answers: z.array(answerInputSchema).default([]),
   submitReason: z.enum(['manual', 'timer', 'fullscreen_exits']).optional().default('manual'),
@@ -127,5 +135,5 @@ export const listAssessmentQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(['draft', 'published', 'closed']).optional(),
-  kind: z.enum(['assessment', 'online_exam']).optional(),
+  kind: z.enum(['assessment', 'online_exam', 'quiz']).optional(),
 });

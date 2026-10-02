@@ -10,10 +10,12 @@ import {
   updateAssessmentSchema,
   assignAssessmentSchema,
   submitAssessmentSchema,
+  quizProgressSchema,
   proctorCaptureSchema,
   listAssessmentQuery,
   listMyAssignmentsQuery,
   listResultsQuery,
+  joinAssessmentSchema,
 } from './assessment.schemas.js';
 import {
   postAssessment,
@@ -22,12 +24,15 @@ import {
   patchAssessment,
   postPublishAssessment,
   postUnpublishAssessment,
+  postJoinAssessment,
   deleteOneAssessment,
   postAssignAssessment,
   getAssessmentAssignees,
   getMyAssignments,
   getOneAssignment,
   postSubmitAssignment,
+  postQuizProgress,
+  getQuizLive,
   postFullscreenExit,
   postProctorCapture,
   getProctorCaptures,
@@ -83,10 +88,23 @@ r.post(
   postFullscreenExit
 );
 r.post(
+  '/assignments/:assignmentId/progress',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT),
+  validateBody(quizProgressSchema),
+  postQuizProgress
+);
+r.post(
   '/assignments/:assignmentId/submit',
   requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT, PERMISSION_KEYS.ONLINE_EXAM_SUBMIT),
   validateBody(submitAssessmentSchema),
   postSubmitAssignment
+);
+
+r.post(
+  '/join',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_SUBMIT, PERMISSION_KEYS.ASSESSMENT_VIEW),
+  validateBody(joinAssessmentSchema),
+  postJoinAssessment
 );
 
 r.get(
@@ -116,6 +134,11 @@ r.post(
   validateBody(assignAssessmentSchema),
   requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
   postAssignAssessment
+);
+r.get(
+  '/:id/live',
+  requirePermission(PERMISSION_KEYS.ASSESSMENT_CREATE, PERMISSION_KEYS.ONLINE_EXAM_CREATE),
+  getQuizLive
 );
 r.get(
   '/:id/results',

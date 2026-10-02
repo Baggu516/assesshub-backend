@@ -39,6 +39,7 @@ function featureFlags(raw, fallback = {}) {
     aiAssessmentCreate: raw?.aiAssessmentCreate === true,
     worksheets: raw?.worksheets === true,
     assessments: raw?.assessments === true,
+    quizzes: raw?.quizzes === true,
     onlineExams:
       raw && Object.prototype.hasOwnProperty.call(raw, 'onlineExams')
         ? raw.onlineExams === true
@@ -167,6 +168,7 @@ export async function createOrganizationWithOptionalAdmin(body, logoFile) {
     aiAssessmentCreate: false,
     worksheets: false,
     assessments: false,
+    quizzes: false,
     onlineExams: false,
   };
 

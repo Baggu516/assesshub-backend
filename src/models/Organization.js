@@ -58,6 +58,7 @@ const organizationSchema = new mongoose.Schema(
       aiAssessmentCreate: { type: Boolean, default: false },
       worksheets: { type: Boolean, default: false },
       assessments: { type: Boolean, default: false },
+      quizzes: { type: Boolean, default: false },
       onlineExams: { type: Boolean, default: false },
     },
     settings: {

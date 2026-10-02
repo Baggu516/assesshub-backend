@@ -6,6 +6,7 @@ export const ALL_ORG_FEATURES = {
   aiAssessmentCreate: true,
   worksheets: true,
   assessments: true,
+  quizzes: true,
   onlineExams: true,
 };
 
@@ -21,6 +22,7 @@ export function normalizeOrgFeatures(organization) {
     aiAssessmentCreate: false,
     worksheets: false,
     assessments: false,
+    quizzes: false,
     onlineExams: true,
   };
 
@@ -44,6 +46,7 @@ export function normalizeOrgFeatures(organization) {
       aiAssessmentCreate: raw.aiAssessmentCreate === true,
       worksheets: has('worksheets') ? raw.worksheets === true : false,
       assessments: has('assessments') ? raw.assessments === true : false,
+      quizzes: has('quizzes') ? raw.quizzes === true : false,
       onlineExams: has('onlineExams') ? raw.onlineExams === true : true,
     };
   }
@@ -101,6 +104,7 @@ export function requireAiAssessmentCreate(req, _res, next) {
 const FEATURE_LABELS = {
   worksheets: 'Worksheets',
   assessments: 'Assessments',
+  quizzes: 'Quizzes',
   onlineExams: 'Online exams',
   aiDashboard: 'AI on dashboard',
   aiAssessmentCreate: 'Create with AI',

@@ -6,12 +6,15 @@ import {
   updateAssessment,
   publishAssessment,
   unpublishAssessment,
+  joinAssessmentByCode,
   deleteAssessment,
   assignAssessment,
   listAssessmentAssignees,
   listMyAssignments,
   getAssignment,
   submitAssignment,
+  saveQuizProgress,
+  listQuizLive,
   recordFullscreenExit,
   saveProctorCapture,
   listProctorCaptures,
@@ -64,6 +67,32 @@ export const postPublishAssessment = asyncHandler(async (req, res) => {
     req.params.id
   );
   res.json({ assessment });
+});
+
+export const postQuizProgress = asyncHandler(async (req, res) => {
+  const result = await saveQuizProgress(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.params.assignmentId,
+    req.body
+  );
+  res.json(result);
+});
+
+export const getQuizLive = asyncHandler(async (req, res) => {
+  const live = await listQuizLive(req.tenantModels, req.user, req.tenant.orgId, req.params.id);
+  res.json(live);
+});
+
+export const postJoinAssessment = asyncHandler(async (req, res) => {
+  const assignment = await joinAssessmentByCode(
+    req.tenantModels,
+    req.user,
+    req.tenant.orgId,
+    req.body.code
+  );
+  res.json({ assignment });
 });
 
 export const postUnpublishAssessment = asyncHandler(async (req, res) => {

@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import mongoose from 'mongoose';
 import { PERMISSION_KEYS } from '../../constants/permissions.js';
 import { logActivity } from '../../utils/activity.js';
@@ -21,7 +22,8 @@ export const MAX_FULLSCREEN_EXITS = 3;
 
 /** Documents created before `kind` existed are the CBT flow, now called online exams. */
 export function storedExamKind(doc) {
-  return doc?.kind === 'assessment' ? 'assessment' : 'online_exam';
+  if (doc?.kind === 'assessment' || doc?.kind === 'quiz') return doc.kind;
+  return 'online_exam';
 }
 
 async function loadOrgFeatures(orgId) {
@@ -31,12 +33,15 @@ async function loadOrgFeatures(orgId) {
 
 async function assertExamKindAllowed(orgId, kind) {
   const features = await loadOrgFeatures(orgId);
-  const allowed = kind === 'assessment' ? features.assessments : features.onlineExams;
+  const allowed =
+    kind === 'quiz' ? features.quizzes : kind === 'assessment' ? features.assessments : features.onlineExams;
   if (!allowed) {
     const err = new Error(
-      kind === 'assessment'
-        ? 'Assessments are not included in this organization plan.'
-        : 'Online exams are not included in this organization plan.'
+      kind === 'quiz'
+        ? 'Quizzes are not included in this organization plan.'
+        : kind === 'assessment'
+          ? 'Assessments are not included in this organization plan.'
+          : 'Online exams are not included in this organization plan.'
     );
     err.status = 403;
     throw err;
@@ -44,7 +49,7 @@ async function assertExamKindAllowed(orgId, kind) {
 }
 
 function kindMongoFilter(kind) {
-  if (kind === 'assessment') return { kind: 'assessment' };
+  if (kind === 'assessment' || kind === 'quiz') return { kind };
   return { $or: [{ kind: 'online_exam' }, { kind: { $exists: false } }, { kind: null }] };
 }
 
@@ -116,6 +121,7 @@ function serializeAssessment(doc, opts = {}) {
     sections: Array.isArray(doc.sections) && doc.sections.length ? doc.sections : ['Section A'],
     kind: storedExamKind(doc),
     status: doc.status,
+    joinCode: doc.joinCode || null,
     resultsReleased: Boolean(doc.resultsReleased),
     resultsReleasedAt: doc.resultsReleasedAt || null,
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
@@ -215,7 +221,7 @@ function studentDisplayName(u) {
 }
 
 function permissionForKind(kind, action) {
-  const online = kind !== 'assessment';
+  const online = kind === 'online_exam';
   if (action === 'create') {
     return online ? PERMISSION_KEYS.ONLINE_EXAM_CREATE : PERMISSION_KEYS.ASSESSMENT_CREATE;
   }
@@ -243,6 +249,51 @@ function canCreateAssessment(actor) {
 
 function isStudent(actor) {
   return actor.hierarchyRole === 'user';
+}
+
+const JOIN_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+function randomJoinCode() {
+  const bytes = crypto.randomBytes(6);
+  let code = '';
+  for (let i = 0; i < 6; i += 1) {
+    code += JOIN_CODE_ALPHABET[bytes[i] % JOIN_CODE_ALPHABET.length];
+  }
+  return code;
+}
+
+async function allocateJoinCode(Assessment, orgId) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = randomJoinCode();
+    const taken = await Assessment.exists({ orgId, joinCode: code, ...ACTIVE });
+    if (!taken) return code;
+  }
+  const err = new Error('Could not create a quiz code. Try launching again.');
+  err.status = 500;
+  throw err;
+}
+
+/** Published quizzes get a join code. Already-launched quizzes are filled in on the next teacher list. */
+async function ensureJoinCode(Assessment, doc) {
+  if (!doc || storedExamKind(doc) !== 'quiz' || doc.status !== 'published' || doc.joinCode) {
+    return doc?.joinCode || null;
+  }
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const code = randomJoinCode();
+    try {
+      const updated = await Assessment.findOneAndUpdate(
+        { _id: doc._id, $or: [{ joinCode: null }, { joinCode: { $exists: false } }] },
+        { $set: { joinCode: code } },
+        { new: true }
+      ).lean();
+      if (updated?.joinCode) return updated.joinCode;
+    } catch (err) {
+      if (err?.code !== 11000) throw err;
+    }
+    const current = await Assessment.findById(doc._id).select('joinCode').lean();
+    if (current?.joinCode) return current.joinCode;
+  }
+  return null;
 }
 
 function normalizeShortAnswer(text, caseSensitive) {
@@ -337,7 +388,7 @@ export async function createAssessment(models, actor, orgId, body, ip) {
       : ['Section A'];
   const fallbackSection = sections[0] || 'Section A';
 
-  const kind = body.kind === 'assessment' ? 'assessment' : 'online_exam';
+  const kind = body.kind === 'assessment' || body.kind === 'quiz' ? body.kind : 'online_exam';
   assertKindPermission(actor, kind, 'create');
   await assertExamKindAllowed(orgId, kind);
 
@@ -381,7 +432,8 @@ export async function listAssessments(models, actor, orgId, query) {
   const oid = orgOid(orgId);
   const { page = 1, limit = 20, status } = query;
 
-  const requestedKind = query.kind === 'assessment' ? 'assessment' : 'online_exam';
+  const requestedKind =
+    query.kind === 'assessment' || query.kind === 'quiz' ? query.kind : 'online_exam';
   assertKindPermission(actor, requestedKind, 'create');
   await assertExamKindAllowed(orgId, requestedKind);
 
@@ -422,6 +474,11 @@ export async function listAssessments(models, actor, orgId, query) {
           },
         ]);
   const countMap = new Map(counts.map((c) => [String(c._id), c]));
+
+  for (const item of items) {
+    const code = await ensureJoinCode(Assessment, item);
+    if (code) item.joinCode = code;
+  }
 
   return {
     assessments: items.map((a) => {
@@ -553,8 +610,95 @@ export async function publishAssessment(models, actor, orgId, assessmentId) {
   }
 
   doc.status = 'published';
+  if (storedExamKind(doc) === 'quiz' && !doc.joinCode) {
+    doc.joinCode = await allocateJoinCode(Assessment, doc.orgId);
+  }
   await doc.save();
   return serializeAssessment(doc.toObject());
+}
+
+export async function joinAssessmentByCode(models, actor, orgId, code) {
+  if (!isStudent(actor)) {
+    const err = new Error('Only students can join a quiz with a code');
+    err.status = 403;
+    throw err;
+  }
+
+  assertKindPermission(actor, 'assessment', 'submit');
+  await assertExamKindAllowed(orgId, 'quiz');
+
+  const normalized = String(code || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  if (normalized.length < 4) {
+    const err = new Error('Enter the quiz code');
+    err.status = 400;
+    throw err;
+  }
+
+  const { Assessment, AssessmentAssignment } = models;
+  const oid = orgOid(orgId);
+  const assessment = await Assessment.findOne({
+    orgId: oid,
+    joinCode: normalized,
+    status: 'published',
+    kind: 'quiz',
+    ...ACTIVE,
+  });
+  if (!assessment) {
+    const err = new Error('That code does not match a live quiz');
+    err.status = 404;
+    throw err;
+  }
+
+  const now = new Date();
+  if (assessment.startAt && now < new Date(assessment.startAt)) {
+    const err = new Error('This quiz has not started yet');
+    err.status = 400;
+    throw err;
+  }
+  if (assessment.endAt && now > new Date(assessment.endAt)) {
+    const err = new Error('This quiz has ended');
+    err.status = 400;
+    throw err;
+  }
+
+  const year = await resolveAcademicYear(models, orgId);
+  if (!year) {
+    const err = new Error('No academic year configured.');
+    err.status = 400;
+    throw err;
+  }
+
+  let assignment = await AssessmentAssignment.findOne({
+    orgId: oid,
+    assessmentId: assessment._id,
+    studentId: actor._id,
+    academicYearId: year._id,
+  });
+
+  if (!assignment) {
+    const maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+    assignment = await AssessmentAssignment.create({
+      orgId: oid,
+      assessmentId: assessment._id,
+      studentId: actor._id,
+      assignedBy: assessment.createdBy,
+      academicYearId: year._id,
+      status: 'pending',
+      maxScore,
+      score: 0,
+      answers: [],
+      dueDate: assessment.endAt || null,
+    });
+  }
+
+  return serializeAssignment(assignment.toObject(), {
+    assessmentTitle: assessment.title,
+    assessmentStatus: assessment.status,
+    academicYearLabel: year.label,
+  });
 }
 
 export async function unpublishAssessment(models, actor, orgId, assessmentId) {
@@ -729,7 +873,7 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
   const { AssessmentAssignment, Assessment, User, AcademicYear } = models;
   const oid = orgOid(orgId);
 
-  if (query.kind === 'assessment' || query.kind === 'online_exam') {
+  if (query.kind === 'assessment' || query.kind === 'online_exam' || query.kind === 'quiz') {
     assertKindPermission(actor, query.kind, 'view');
   } else if (
     !actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_VIEW) &&
@@ -755,12 +899,15 @@ export async function listMyAssignments(models, actor, orgId, query = {}) {
 
   const features = await loadOrgFeatures(orgId);
   const requestedKind =
-    query.kind === 'assessment' || query.kind === 'online_exam' ? query.kind : null;
+    query.kind === 'assessment' || query.kind === 'online_exam' || query.kind === 'quiz'
+      ? query.kind
+      : null;
   if (requestedKind) await assertExamKindAllowed(orgId, requestedKind);
   const allowedKinds = requestedKind
     ? [requestedKind]
     : [
         ...(features.assessments ? ['assessment'] : []),
+        ...(features.quizzes ? ['quiz'] : []),
         ...(features.onlineExams ? ['online_exam'] : []),
       ];
 
@@ -1172,6 +1319,150 @@ export async function readProctorCapture(models, actor, orgId, assignmentId, cap
   }
   const buffer = await downloadS3ToBuffer(capture.storagePath);
   return { buffer, capturedAt: capture.capturedAt };
+}
+
+function gradeQuizAnswers(assessment, inputs) {
+  const inputByQuestion = new Map((inputs || []).map((a) => [String(a.questionId), a]));
+  const gradedAnswers = (assessment.questions || []).map((question) => {
+    const input = inputByQuestion.get(question._id.toString()) || {
+      questionId: String(question._id),
+      selectedOptionIds: [],
+      textAnswer: '',
+    };
+    const { isCorrect, pointsEarned } = gradeAnswer(question, input, assessment);
+    const selected = (input.selectedOptionIds || []).filter(Boolean);
+    return {
+      questionId: question._id,
+      selectedOptionIds: selected.map((id) => new mongoose.Types.ObjectId(id)),
+      textAnswer: input.textAnswer || '',
+      isCorrect: selected.length ? isCorrect : false,
+      pointsEarned: selected.length ? pointsEarned : 0,
+      answered: selected.length > 0,
+    };
+  });
+  const score = Math.max(
+    0,
+    gradedAnswers.reduce((sum, a) => sum + (a.pointsEarned || 0), 0)
+  );
+  const answered = gradedAnswers.filter((a) => a.answered).length;
+  return {
+    answers: gradedAnswers.map(({ answered: _answered, ...answer }) => answer),
+    score,
+    answered,
+  };
+}
+
+export async function saveQuizProgress(models, actor, orgId, assignmentId, body) {
+  if (!actor.permissions.includes(PERMISSION_KEYS.ASSESSMENT_SUBMIT)) {
+    const err = new Error('Missing permission: assessment_submit');
+    err.status = 403;
+    throw err;
+  }
+  await assertExamKindAllowed(orgId, 'quiz');
+
+  const { AssessmentAssignment, Assessment } = models;
+  const oid = orgOid(orgId);
+  const assignment = await AssessmentAssignment.findOne({ _id: assignmentId, orgId: oid });
+  if (!assignment) {
+    const err = new Error('Assignment not found');
+    err.status = 404;
+    throw err;
+  }
+  if (assignment.studentId?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+  if (assignment.status === 'submitted') return { ok: true };
+
+  const assessment = await Assessment.findOne({
+    _id: assignment.assessmentId,
+    orgId: oid,
+    kind: 'quiz',
+    status: 'published',
+    ...ACTIVE,
+  }).lean();
+  if (!assessment) {
+    const err = new Error('Quiz is not live');
+    err.status = 400;
+    throw err;
+  }
+
+  const previous = new Map(
+    (assignment.answers || []).map((a) => [
+      String(a.questionId),
+      {
+        questionId: String(a.questionId),
+        selectedOptionIds: (a.selectedOptionIds || []).map(String),
+        textAnswer: a.textAnswer || '',
+      },
+    ])
+  );
+  for (const input of body.answers || []) {
+    if ((input.selectedOptionIds || []).length) previous.set(String(input.questionId), input);
+  }
+
+  const graded = gradeQuizAnswers(assessment, [...previous.values()]);
+  assignment.answers = graded.answers;
+  assignment.score = graded.score;
+  assignment.maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+  if (!assignment.startedAt) assignment.startedAt = new Date();
+  await assignment.save();
+  return { ok: true, score: graded.score, answered: graded.answered };
+}
+
+export async function listQuizLive(models, actor, orgId, assessmentId) {
+  if (!canCreateAssessment(actor)) {
+    const err = new Error('Missing permission: assessment_create');
+    err.status = 403;
+    throw err;
+  }
+  await assertExamKindAllowed(orgId, 'quiz');
+
+  const { Assessment, AssessmentAssignment, User } = models;
+  const oid = orgOid(orgId);
+  const assessment = await Assessment.findOne({ _id: assessmentId, orgId: oid, kind: 'quiz', ...ACTIVE }).lean();
+  if (!assessment) {
+    const err = new Error('Quiz not found');
+    err.status = 404;
+    throw err;
+  }
+  if (actor.hierarchyRole === 'subordinate' && assessment.createdBy?.toString() !== actor._id.toString()) {
+    const err = new Error('Forbidden');
+    err.status = 403;
+    throw err;
+  }
+
+  const questionCount = (assessment.questions || []).length;
+  const maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
+  const assignments = await AssessmentAssignment.find({ orgId: oid, assessmentId: assessment._id }).lean();
+  const students = await User.find({ _id: { $in: assignments.map((a) => a.studentId) } }).lean();
+  const studentMap = new Map(students.map((s) => [String(s._id), s]));
+
+  const players = assignments
+    .map((a) => {
+      const student = studentMap.get(String(a.studentId));
+      const answered = (a.answers || []).filter(
+        (ans) => (ans.selectedOptionIds || []).length > 0 || String(ans.textAnswer || '').trim()
+      ).length;
+      const finished = a.status === 'submitted';
+      const cursor = finished ? Math.max(questionCount - 1, 0) : Math.min(answered, Math.max(questionCount - 1, 0));
+      const lookingAt = (assessment.questions || [])[cursor];
+      return {
+        id: String(a._id),
+        name: student ? studentDisplayName(student) : 'Student',
+        score: Number(a.score) || 0,
+        maxScore: a.maxScore || maxScore,
+        answered,
+        questionCount,
+        onQuestion: finished ? questionCount : Math.min(answered + 1, questionCount),
+        questionTitle: lookingAt?.prompt || '',
+        status: finished ? 'finished' : answered > 0 ? 'playing' : 'joined',
+      };
+    })
+    .sort((a, b) => b.score - a.score || b.answered - a.answered || a.name.localeCompare(b.name));
+
+  return { questionCount, maxScore, players };
 }
 
 export async function submitAssignment(models, actor, orgId, assignmentId, body) {

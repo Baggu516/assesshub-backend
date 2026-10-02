@@ -43,12 +43,15 @@ export const assessmentSchema = new mongoose.Schema(
     /**
      * assessment — question paper students attempt, without the exam lock.
      * online_exam — CBT. Leaving fullscreen three times submits the exam.
+     * quiz — live join-with-code activity. Separate from assessments and online exams.
      * Older documents have no kind and are treated as online exams.
      */
-    kind: { type: String, enum: ['assessment', 'online_exam'], default: 'online_exam' },
+    kind: { type: String, enum: ['assessment', 'online_exam', 'quiz'], default: 'online_exam' },
     /** Online exams only. When true, the student must enable the camera before starting. */
     cameraMonitor: { type: Boolean, default: false },
     status: { type: String, enum: ASSESSMENT_STATUSES, default: 'draft' },
+    /** Short code students use to join a launched quiz. Not an inbox and not used for online exams. */
+    joinCode: { type: String, trim: true, uppercase: true, maxlength: 8 },
     /** Students see scores only after teacher announces results */
     resultsReleased: { type: Boolean, default: false },
     resultsReleasedAt: { type: Date, default: null },
@@ -60,3 +63,7 @@ export const assessmentSchema = new mongoose.Schema(
 );
 
 assessmentSchema.index({ orgId: 1, createdBy: 1, status: 1 });
+assessmentSchema.index(
+  { orgId: 1, joinCode: 1 },
+  { unique: true, partialFilterExpression: { joinCode: { $type: 'string' } } }
+);
