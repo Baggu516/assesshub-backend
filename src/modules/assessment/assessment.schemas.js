@@ -54,6 +54,8 @@ export const createAssessmentSchema = z.object({
   allowPartialCredit: z.boolean().optional().default(true),
   showAnswersAfterSubmit: z.boolean().optional().default(true),
   cameraMonitor: z.boolean().optional().default(false),
+  quizShuffle: z.enum(['options', 'questions']).optional().default('options'),
+  revealAnswers: z.boolean().optional().default(false),
   sections: z.array(z.string().trim().min(1).max(80)).optional(),
   questions: z.array(questionSchema).min(1),
 });

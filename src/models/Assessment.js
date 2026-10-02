@@ -52,6 +52,13 @@ export const assessmentSchema = new mongoose.Schema(
     status: { type: String, enum: ASSESSMENT_STATUSES, default: 'draft' },
     /** Short code students use to join a launched quiz. Not an inbox and not used for online exams. */
     joinCode: { type: String, trim: true, uppercase: true, maxlength: 8 },
+    /**
+     * Quiz only. options = same question order, choices shuffled per student.
+     * questions = question order and choices both shuffled per student.
+     */
+    quizShuffle: { type: String, enum: ['options', 'questions'], default: 'options' },
+    /** Quiz only. After a choice, show whether it was correct before the next question. */
+    revealAnswers: { type: Boolean, default: false },
     /** Students see scores only after teacher announces results */
     resultsReleased: { type: Boolean, default: false },
     resultsReleasedAt: { type: Date, default: null },

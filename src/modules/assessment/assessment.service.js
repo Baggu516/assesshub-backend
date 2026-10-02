@@ -122,6 +122,8 @@ function serializeAssessment(doc, opts = {}) {
     kind: storedExamKind(doc),
     status: doc.status,
     joinCode: doc.joinCode || null,
+    quizShuffle: doc.quizShuffle === 'questions' ? 'questions' : 'options',
+    revealAnswers: doc.revealAnswers === true,
     resultsReleased: Boolean(doc.resultsReleased),
     resultsReleasedAt: doc.resultsReleasedAt || null,
     createdBy: doc.createdBy ? String(doc.createdBy) : null,
@@ -407,6 +409,8 @@ export async function createAssessment(models, actor, orgId, body, ip) {
     allowPartialCredit: body.allowPartialCredit !== false,
     showAnswersAfterSubmit: body.showAnswersAfterSubmit !== false,
     cameraMonitor: kind === 'online_exam' && body.cameraMonitor === true,
+    quizShuffle: kind === 'quiz' && body.quizShuffle === 'questions' ? 'questions' : 'options',
+    revealAnswers: kind === 'quiz' && body.revealAnswers === true,
     sections,
     status: 'draft',
     createdBy: actor._id,
@@ -1088,9 +1092,16 @@ export async function getAssignment(models, actor, orgId, assignmentId, options 
     }
   }
 
-  // Each student sees a different option order. Grading still uses option ids.
+  // Order is fixed per student, so a refresh does not reshuffle mid-attempt.
+  // Grading still uses question and option ids.
   if (isStudentOwner) {
     const studentKey = String(assignment.studentId);
+    if (storedExamKind(assessment) === 'quiz' && assessment.quizShuffle === 'questions') {
+      serializedAssessment.questions = shuffleWithSeed(
+        serializedAssessment.questions,
+        `${studentKey}:questions:${serializedAssessment.id}`
+      );
+    }
     for (const q of serializedAssessment.questions) {
       if (Array.isArray(q.options) && q.options.length > 1) {
         q.options = shuffleWithSeed(q.options, `${studentKey}:${q.id}`);
@@ -1408,7 +1419,22 @@ export async function saveQuizProgress(models, actor, orgId, assignmentId, body)
   assignment.maxScore = (assessment.questions || []).reduce((sum, q) => sum + (q.points ?? 1), 0);
   if (!assignment.startedAt) assignment.startedAt = new Date();
   await assignment.save();
-  return { ok: true, score: graded.score, answered: graded.answered };
+
+  const reveal = assessment.revealAnswers
+    ? graded.answers
+        .filter((answer) => (answer.selectedOptionIds || []).length)
+        .map((answer) => {
+          const question = (assessment.questions || []).find((item) => String(item._id) === String(answer.questionId));
+          const correct = (question?.options || []).find((option) => option.isCorrect);
+          return {
+            questionId: String(answer.questionId),
+            isCorrect: Boolean(answer.isCorrect),
+            correctOptionId: correct ? String(correct._id) : '',
+          };
+        })
+    : [];
+
+  return { ok: true, score: graded.score, answered: graded.answered, reveal };
 }
 
 export async function listQuizLive(models, actor, orgId, assessmentId) {
