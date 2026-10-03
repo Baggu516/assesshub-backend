@@ -7,6 +7,7 @@ import { sendInvitationEmail, sendWelcomeUserEmail } from '../../utils/mailer.js
 import { allocateRegistrationId } from '../../utils/registrationId.js';
 import { Organization } from '../../models/Organization.js';
 import { listAssignableStudents, mapStudentClassesForTeacher } from '../shared/studentScope.service.js';
+import { describeAccess, TRIAL_MS } from '../billing/access.js';
 
 const DEFAULT_SUBORDINATE_PERMS = keysForRole('subordinate');
 const DEFAULT_MEMBER_PERMS = keysForRole('user');
@@ -96,6 +97,7 @@ export function serializeUserDoc(u) {
     permissions: u.permissions || [],
     isActive: u.isActive,
     createdAt: u.createdAt,
+    ...(u.hierarchyRole === 'user' ? { access: describeAccess(u) } : {}),
   };
 }
 
@@ -315,6 +317,7 @@ export async function createMember(models, creator, orgId, body) {
   const registrationId = await allocateRegistrationId(User, orgId, org.registrationPrefix);
 
   const memberPermissions = body.permissions?.length ? body.permissions : DEFAULT_MEMBER_PERMS;
+  const trialStartedAt = new Date();
 
   const user = await User.create({
     orgId,
@@ -327,6 +330,8 @@ export async function createMember(models, creator, orgId, body) {
     parentUserId,
     roleId: memRole._id,
     permissions: memberPermissions,
+    trialStartedAt,
+    trialEndsAt: new Date(trialStartedAt.getTime() + TRIAL_MS),
   });
 
   await sendWelcomeAfterCreate({

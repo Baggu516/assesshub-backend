@@ -33,7 +33,14 @@ export function createApp() {
   app.get('/', (_req, res) => {
     res.json({ ok: true, service: 'assesshub-api' });
   });
-  app.use(express.json({ limit: '2mb' }));
+  app.use(
+    express.json({
+      limit: '2mb',
+      verify(req, _res, buf) {
+        if (req.originalUrl?.includes('/billing/webhook')) req.rawBody = buf;
+      },
+    })
+  );
   app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
   app.use('/api', ensureDb, apiLimiter, routes);
   app.use(errorMiddleware);

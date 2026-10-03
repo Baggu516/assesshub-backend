@@ -14,6 +14,7 @@ import { ALL_PERMISSION_KEYS } from '../../constants/permissions.js';
 import { allocateRegistrationId, ensureUserRegistrationId } from '../../utils/registrationId.js';
 import { isReservedSubdomain } from '../../utils/reservedSubdomains.js';
 import { revokeUserAccessTokens } from '../../cache/tokenRevocation.js';
+import { describeAccess, stampStudentTrial } from '../billing/access.js';
 
 /** Stores refresh token and returns the same token payload shape as login. */
 export async function issueTenantSession(models, populatedUser, subdomain) {
@@ -61,6 +62,7 @@ export function sanitizeUser(user) {
     permissions: user.permissions || [],
     orgId: user.orgId,
     roleId: user.roleId,
+    ...(user.hierarchyRole === 'user' ? { access: describeAccess(user) } : {}),
   };
 }
 
@@ -210,6 +212,7 @@ export async function login({ email, identifier, password, orgId }, req) {
     console.error('[registrationId] backfill failed:', err?.message || err);
   }
 
+  stampStudentTrial(user);
   user.lastLoginAt = new Date();
   await user.save();
 
@@ -291,6 +294,8 @@ export async function refreshSession({ refreshToken, req }) {
   record.revokedAt = new Date();
   await record.save();
 
+  if (stampStudentTrial(user)) await user.save();
+
   const refreshPlain = signRefreshToken({
     sub: user._id.toString(),
     orgId: user.orgId.toString(),
@@ -347,6 +352,7 @@ export async function acceptInvite({ token, password, orgId }, models) {
   user.passwordHash = await hashPassword(password);
   user.inviteToken = undefined;
   user.inviteExpiresAt = undefined;
+  stampStudentTrial(user);
   await user.save();
 
   const populated = await User.findById(user._id).populate('roleId');

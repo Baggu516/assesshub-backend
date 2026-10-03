@@ -28,6 +28,18 @@ import {
   patchPlatformUserSchema,
 } from './platform.schemas.js';
 import { logoUpload } from './logo.upload.js';
+import {
+  getSubscriptionOverview,
+  getSubscriptionStudents,
+  patchSchoolBilling,
+  postAssignPlan,
+  postStudentAccess,
+} from './platformSubscriptions.controller.js';
+import {
+  assignPlanSchema,
+  schoolBillingSchema,
+  studentAccessSchema,
+} from './platformSubscriptions.schemas.js';
 
 const r = Router();
 
@@ -42,6 +54,20 @@ r.use(platformAuthMiddleware);
 
 r.get('/ping', pingPlatform);
 r.get('/stats', getPlatformStats);
+
+r.get('/subscriptions', getSubscriptionOverview);
+r.get('/subscriptions/:orgId', getSubscriptionStudents);
+r.patch('/subscriptions/:orgId', validateBody(schoolBillingSchema), patchSchoolBilling);
+r.post(
+  '/subscriptions/:orgId/students/:userId/assign',
+  validateBody(assignPlanSchema),
+  postAssignPlan
+);
+r.post(
+  '/subscriptions/:orgId/students/:userId/access',
+  validateBody(studentAccessSchema),
+  postStudentAccess
+);
 r.get('/users', listPlatformUsers);
 r.post('/users', validateBody(createPlatformUserSchema), createPlatformUser);
 r.get('/users/:id', getPlatformUser);

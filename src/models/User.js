@@ -26,6 +26,15 @@ export const userSchema = new mongoose.Schema(
     passwordResetOtpExpiresAt: { type: Date, default: null },
     passwordResetOtpAttempts: { type: Number, default: 0 },
     lastLoginAt: { type: Date },
+    /** Set once when the student trial starts. Admins and teachers leave these empty. */
+    trialStartedAt: { type: Date, default: null },
+    trialEndsAt: { type: Date, default: null },
+    /** End of the last paid student period. Access continues while this is in the future. */
+    subscriptionEndsAt: { type: Date, default: null },
+    /** Last plan granted or purchased: monthly, quarterly, yearly. */
+    subscriptionPlanId: { type: String, enum: ['monthly', 'quarterly', 'yearly'] },
+    /** Master console can lock a student even when a trial or paid period is still open. */
+    subscriptionSuspended: { type: Boolean, default: false },
   },
   { timestamps: true }
 );

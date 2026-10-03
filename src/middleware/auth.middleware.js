@@ -1,5 +1,11 @@
 import { verifyAccessToken } from '../utils/jwt.js';
 import { isAccessTokenRevoked } from '../cache/tokenRevocation.js';
+import { describeAccess, stampStudentTrial } from '../modules/billing/access.js';
+
+function openWhenSubscriptionLocked(req) {
+  const path = req.originalUrl || req.url || '';
+  return path.startsWith('/api/auth') || path.startsWith('/api/billing');
+}
 
 export async function requireAuth(req, res, next) {
   try {
@@ -38,12 +44,26 @@ export async function requireAuth(req, res, next) {
       return res.status(403).json({ error: 'Tenant mismatch for this user' });
     }
 
+    if (stampStudentTrial(user)) await user.save();
+
+    const billingEnabled = req.tenant?.organization?.studentBillingEnabled !== false;
+    const access = describeAccess(user, new Date(), { billingEnabled });
+    req.studentAccess = access;
     req.user = user;
     req.auth = {
       userId: user._id.toString(),
       orgId: user.orgId.toString(),
       permissions: user.permissions || [],
     };
+
+    if (access.locked && !openWhenSubscriptionLocked(req)) {
+      return res.status(402).json({
+        error: 'Your free trial has ended. Subscribe to continue.',
+        code: 'SUBSCRIPTION_REQUIRED',
+        access,
+      });
+    }
+
     return next();
   } catch (e) {
     return next(e);

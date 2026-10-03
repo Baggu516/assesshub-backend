@@ -17,6 +17,7 @@ import academicYearRoutes from '../modules/academic-year/academic-year.routes.js
 import classMasterRoutes from '../modules/class-master/class-master.routes.js';
 import promotionRoutes from '../modules/promotion/promotion.routes.js';
 import learningResourceRoutes from '../modules/learning-resource/learning-resource.routes.js';
+import billingRoutes from '../modules/billing/billing.routes.js';
 
 const r = Router();
 
@@ -67,6 +68,7 @@ r.use('/academic-years', academicYearRoutes);
 r.use('/class-masters', classMasterRoutes);
 r.use('/promotions', promotionRoutes);
 r.use('/learning-resources', learningResourceRoutes);
+r.use('/billing', billingRoutes);
 r.use('/platform', platformRoutes);
 
 export default r;

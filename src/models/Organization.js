@@ -32,6 +32,16 @@ const organizationSchema = new mongoose.Schema(
       sparse: true,
     },
     isActive: { type: Boolean, default: true },
+    /**
+     * When true, students must be inside the free trial or a paid period.
+     * Master can turn this off so a school is not asked to pay.
+     */
+    studentBillingEnabled: { type: Boolean, default: true },
+    /**
+     * Rupees, stored as paise, paid to the school for each student who paid
+     * a subscription this calendar month. Master-assigned plans are not counted.
+     */
+    commissionPerStudentPaise: { type: Number, default: 0, min: 0 },
     /** Public HTTPS logo URL (Supabase Storage). Shown on the login page. */
     logoUrl: { type: String, trim: true },
     /** Internal S3 ref `s3://bucket/key` for logo cleanup/replacement. */
